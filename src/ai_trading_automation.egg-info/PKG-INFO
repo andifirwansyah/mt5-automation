@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: ai-trading-automation
+Version: 0.1.0
+Summary: Backend and trading engine automation for XAUUSD multi-timeframe OHLCV workflow.
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn>=0.30.0
+Requires-Dist: pydantic>=2.8.0
+Requires-Dist: pandas>=2.2.0
+Requires-Dist: numpy>=2.0.0
+Requires-Dist: sqlalchemy>=2.0.0
+Requires-Dist: pymysql>=1.1.0
+Requires-Dist: psycopg[binary]>=3.2.0
+Requires-Dist: python-dotenv>=1.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0.0; extra == "dev"
+Requires-Dist: ruff>=0.6.0; extra == "dev"
+Requires-Dist: mypy>=1.11.0; extra == "dev"
+Requires-Dist: alembic>=1.13.0; extra == "dev"
+Requires-Dist: httpx>=0.27.0; extra == "dev"
