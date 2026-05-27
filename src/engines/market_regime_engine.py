@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover
 from src.domain.enums import MarketRegimeType
 from src.domain.models.regime_result import RegimeResult
 from src.pipeline.pipeline_step import PipelineStep
+from src.pipeline.rejection_reason import CHOPPY_MARKET_NO_TRADE, LOW_VOLATILITY_NO_TRADE
 from src.pipeline.trading_context import TradingContext
 from src.repositories.regime_repository import RegimeRepository
 
@@ -102,7 +103,15 @@ class MarketRegimeEngine(PipelineStep):
             regime = MarketRegimeType.RANGING
 
         confidence = min(0.99, max(0.3, (trend_strength * 0.2) + (volatility_score * 10)))
-        is_tradeable = regime not in (MarketRegimeType.CHOPPY,)
+        if regime == MarketRegimeType.CHOPPY:
+            is_tradeable = False
+            regime_reason = CHOPPY_MARKET_NO_TRADE
+        elif regime == MarketRegimeType.LOW_VOLATILITY:
+            is_tradeable = False
+            regime_reason = LOW_VOLATILITY_NO_TRADE
+        else:
+            is_tradeable = True
+            regime_reason = None
 
         features = {
             "ema_fast": ema_fast_val,
@@ -116,7 +125,7 @@ class MarketRegimeEngine(PipelineStep):
             regime=regime,
             confidence=confidence,
             is_tradeable=is_tradeable,
-            reason=None,
+            reason=regime_reason,
             features=features,
         )
 

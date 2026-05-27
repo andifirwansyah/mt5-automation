@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,9 +20,14 @@ from src.engines.execution_gate import ExecutionGate
 from src.engines.kill_switch_monitor import KillSwitchMonitor
 from src.engines.risk_engine import RiskEngine
 from src.engines.signal_validator import SignalValidator
+from src.engines.market_regime_engine import MarketRegimeEngine
 from src.engines.strategy_selector import StrategySelector
 from src.orchestrators.trading_orchestrator import TradingOrchestrator
 from src.pipeline.pipeline_step import PipelineStep
+from src.pipeline.rejection_reason import (
+    CHOPPY_MARKET_NO_TRADE,
+    LOW_VOLATILITY_NO_TRADE,
+)
 from src.pipeline.trading_context import TradingContext
 
 
@@ -43,6 +49,18 @@ class DummySession:
                 return []
 
         return _R()
+
+
+@dataclass
+class _StrategyRow:
+    id: uuid.UUID
+    code: str
+    name: str
+
+
+@dataclass
+class _StrategyConfigRow:
+    config: dict
 
 
 def _context() -> TradingContext:
@@ -153,14 +171,205 @@ def test_data_quality_guard_rejects_invalid_ohlc() -> None:
 
 def test_strategy_selector_rejects_choppy() -> None:
     class StrategyRepo:
-        pass
+        def __init__(self) -> None:
+            self.called = 0
+
+        def get_active_strategies(self):
+            self.called += 1
+            return []
 
     context = _context()
-    context.regime_result = RegimeResult(regime=MarketRegimeType.CHOPPY, confidence=0.9, is_tradeable=False)
-    engine = StrategySelector(strategy_repository=StrategyRepo())
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.CHOPPY,
+        confidence=0.9,
+        is_tradeable=False,
+        reason=CHOPPY_MARKET_NO_TRADE,
+        features={"trend_strength": 0.1},
+    )
+    repo = StrategyRepo()
+    engine = StrategySelector(strategy_repository=repo)
     result = engine.run(context)
     assert result.rejected is True
-    assert result.rejection_reason == "NO_STRATEGY_SELECTED"
+    assert result.rejection_reason == CHOPPY_MARKET_NO_TRADE
+    assert repo.called == 0
+
+
+def test_market_regime_engine_low_volatility_sets_no_trade_reason() -> None:
+    class RegimeRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+
+        @staticmethod
+        def create_market_regime(**_kwargs):
+            return None
+
+    context = _context()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    rows = []
+    for i in range(70):
+        base = 2300.0 + (i * 0.01)
+        rows.append({"time": now, "open": base, "high": base + 0.01, "low": base - 0.01, "close": base + 0.005})
+    context.ingestion_result = {"rates_by_timeframe": {"M5": rows}}
+
+    engine = MarketRegimeEngine(
+        regime_repository=RegimeRepo(),
+        high_vol_threshold=1.0,
+        low_vol_threshold=0.01,
+    )
+    result = engine.run(context)
+    assert result.regime_result is not None
+    assert result.regime_result.regime == MarketRegimeType.LOW_VOLATILITY
+    assert result.regime_result.is_tradeable is False
+    assert result.regime_result.reason == LOW_VOLATILITY_NO_TRADE
+
+
+def test_market_regime_engine_choppy_sets_no_trade_reason() -> None:
+    class RegimeRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+
+        @staticmethod
+        def create_market_regime(**_kwargs):
+            return None
+
+    context = _context()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    rows = []
+    for i in range(70):
+        base = 2300.0 + ((-1) ** i) * 0.1
+        rows.append({"time": now, "open": base, "high": base + 2.0, "low": base - 2.0, "close": base + 0.01})
+    context.ingestion_result = {"rates_by_timeframe": {"M5": rows}}
+
+    engine = MarketRegimeEngine(
+        regime_repository=RegimeRepo(),
+        high_vol_threshold=1.0,
+        low_vol_threshold=0.000001,
+        choppy_threshold=1.0,
+        trend_threshold=5.0,
+    )
+    result = engine.run(context)
+    assert result.regime_result is not None
+    assert result.regime_result.regime == MarketRegimeType.CHOPPY
+    assert result.regime_result.is_tradeable is False
+    assert result.regime_result.reason == CHOPPY_MARKET_NO_TRADE
+
+
+def test_strategy_selector_rejects_low_volatility_explicitly() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.called = 0
+
+        def get_active_strategies(self):
+            self.called += 1
+            return []
+
+    context = _context()
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.LOW_VOLATILITY,
+        confidence=0.3,
+        is_tradeable=False,
+        reason=LOW_VOLATILITY_NO_TRADE,
+        features={"volatility_score": 0.001},
+    )
+    repo = StrategyRepo()
+    result = StrategySelector(strategy_repository=repo).run(context)
+    assert result.rejected is True
+    assert result.rejection_reason == LOW_VOLATILITY_NO_TRADE
+    assert repo.called == 0
+
+
+def test_strategy_selector_selects_ema_atr_for_trending_bullish() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+            self._rows = [
+                _StrategyRow(id=uuid.uuid4(), code="EMA_ATR_TREND", name="EMA ATR"),
+                _StrategyRow(id=uuid.uuid4(), code="RANGE_REVERSION", name="RANGE"),
+            ]
+
+        def get_active_strategies(self):
+            return self._rows
+
+        def get_active_strategy_configs(self, **_kwargs):
+            return [_StrategyConfigRow(config={"lot_size": 0.01})]
+
+        @staticmethod
+        def create_strategy_selection(**_kwargs):
+            return None
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.TRENDING_BULLISH,
+        confidence=0.75,
+        is_tradeable=True,
+        features={"trend_strength": 1.2},
+    )
+    result = StrategySelector(strategy_repository=StrategyRepo()).run(context)
+    assert result.rejected is False
+    assert result.strategy_selection is not None
+    assert result.strategy_selection.strategy_code == "EMA_ATR_TREND"
+
+
+def test_strategy_selector_selects_range_reversion_for_ranging() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+            self._rows = [
+                _StrategyRow(id=uuid.uuid4(), code="EMA_ATR_TREND", name="EMA ATR"),
+                _StrategyRow(id=uuid.uuid4(), code="RANGE_REVERSION", name="RANGE"),
+            ]
+
+        def get_active_strategies(self):
+            return self._rows
+
+        def get_active_strategy_configs(self, **_kwargs):
+            return [_StrategyConfigRow(config={"lot_size": 0.01})]
+
+        @staticmethod
+        def create_strategy_selection(**_kwargs):
+            return None
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(regime=MarketRegimeType.RANGING, confidence=0.8, is_tradeable=True, features={})
+    result = StrategySelector(strategy_repository=StrategyRepo()).run(context)
+    assert result.rejected is False
+    assert result.strategy_selection is not None
+    assert result.strategy_selection.strategy_code == "RANGE_REVERSION"
+
+
+def test_strategy_selector_selects_volatility_breakout_for_high_volatility() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+            self._rows = [
+                _StrategyRow(id=uuid.uuid4(), code="EMA_ATR_TREND", name="EMA ATR"),
+                _StrategyRow(id=uuid.uuid4(), code="VOLATILITY_BREAKOUT", name="BREAKOUT"),
+            ]
+
+        def get_active_strategies(self):
+            return self._rows
+
+        def get_active_strategy_configs(self, **_kwargs):
+            return [_StrategyConfigRow(config={"allow_high_volatility": True, "lot_size": 0.01})]
+
+        @staticmethod
+        def create_strategy_selection(**_kwargs):
+            return None
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.HIGH_VOLATILITY,
+        confidence=0.85,
+        is_tradeable=True,
+        features={"volatility_score": 0.04},
+    )
+    result = StrategySelector(strategy_repository=StrategyRepo()).run(context)
+    assert result.rejected is False
+    assert result.strategy_selection is not None
+    assert result.strategy_selection.strategy_code == "VOLATILITY_BREAKOUT"
 
 
 def test_signal_validator_rejects_duplicate_signal() -> None:
