@@ -6,7 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from datetime import timedelta
+
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.database.models import BotInstance, BotRuntimeState, EngineRun
@@ -161,3 +163,40 @@ class BotRepository:
         self.session.add(entity)
         self.session.flush()
         return entity
+
+    def mark_stale_engine_runs_interrupted(self, max_age_minutes: int = 15) -> int:
+        """Mark orphan RUNNING engine rows as INTERRUPTED for safer recovery."""
+
+        cutoff = self._utc_now() - timedelta(minutes=max_age_minutes)
+        running_rows = list(
+            self.session.execute(
+                select(EngineRun).where(EngineRun.status == "RUNNING", EngineRun.created_at <= cutoff)
+            ).scalars().all()
+        )
+        interrupted = 0
+        terminal_statuses = ("SUCCESS", "FAILED", "REJECTED", "INTERRUPTED")
+
+        for row in running_rows:
+            has_terminal = self.session.execute(
+                select(EngineRun.id)
+                .where(
+                    and_(
+                        EngineRun.trace_id == row.trace_id,
+                        EngineRun.engine_name == row.engine_name,
+                        EngineRun.created_at > row.created_at,
+                        EngineRun.status.in_(terminal_statuses),
+                    )
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if has_terminal is not None:
+                continue
+
+            row.status = "INTERRUPTED"
+            row.error_message = row.error_message or "Marked interrupted by runtime recovery"
+            self.session.add(row)
+            interrupted += 1
+
+        if interrupted > 0:
+            self.session.flush()
+        return interrupted

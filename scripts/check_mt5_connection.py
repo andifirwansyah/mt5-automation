@@ -36,6 +36,12 @@ def main() -> None:
         market_data = MT5MarketData()
         position_client = MT5PositionClient()
 
+        print("\n=== MT5 TERMINAL INFO ===")
+        version = connection.get_version()
+        terminal_info = connection.get_terminal_info() or {}
+        print(f"version : {version}")
+        print(f"terminal: {terminal_info}")
+
         # 1) Account info
         account_info = account_client.get_account_info() or {}
         print("\n=== ACCOUNT INFO ===")

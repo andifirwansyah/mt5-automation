@@ -1,0 +1,136 @@
+"""Market regime engine based on EMA, ATR, trend strength, and volatility score."""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover
+    pd = None  # type: ignore[assignment]
+
+from src.domain.enums import MarketRegimeType
+from src.domain.models.regime_result import RegimeResult
+from src.pipeline.pipeline_step import PipelineStep
+from src.pipeline.trading_context import TradingContext
+from src.repositories.regime_repository import RegimeRepository
+
+
+class MarketRegimeEngine(PipelineStep):
+    """Compute market regime from historical OHLCV context."""
+
+    @property
+    def name(self) -> str:
+        return "MarketRegimeEngine"
+
+    def __init__(
+        self,
+        regime_repository: RegimeRepository,
+        ema_fast_period: int = 20,
+        ema_slow_period: int = 50,
+        atr_period: int = 14,
+        trend_threshold: float = 0.8,
+        choppy_threshold: float = 0.3,
+        high_vol_threshold: float = 0.01,
+        low_vol_threshold: float = 0.002,
+    ) -> None:
+        self.regime_repository = regime_repository
+        self.ema_fast_period = ema_fast_period
+        self.ema_slow_period = ema_slow_period
+        self.atr_period = atr_period
+        self.trend_threshold = trend_threshold
+        self.choppy_threshold = choppy_threshold
+        self.high_vol_threshold = high_vol_threshold
+        self.low_vol_threshold = low_vol_threshold
+
+    @staticmethod
+    def _to_dataframe(frame_like: Any) -> pd.DataFrame:
+        if pd is None:
+            raise RuntimeError("pandas is required for MarketRegimeEngine")
+        if isinstance(frame_like, pd.DataFrame):
+            return frame_like.copy()
+        if frame_like is None:
+            return pd.DataFrame()
+        if hasattr(frame_like, "iterrows"):
+            rows: list[dict[str, Any]] = []
+            for _, row in frame_like.iterrows():
+                rows.append(row.to_dict() if hasattr(row, "to_dict") else dict(row))
+            return pd.DataFrame(rows)
+        return pd.DataFrame(frame_like)
+
+    def run(self, context: TradingContext) -> TradingContext:
+        ingestion = context.ingestion_result or {}
+        rates_map = ingestion.get("rates_by_timeframe", {})
+        raw = rates_map.get(context.timeframe)
+        df = self._to_dataframe(raw)
+
+        if df.empty or len(df) < max(self.ema_slow_period, self.atr_period) + 2:
+            context.reject("REGIME_DATA_INSUFFICIENT", {"message": "Not enough candles for regime calculation"})
+            return context
+
+        close = pd.to_numeric(df["close"], errors="coerce")
+        high = pd.to_numeric(df["high"], errors="coerce")
+        low = pd.to_numeric(df["low"], errors="coerce")
+
+        ema_fast = close.ewm(span=self.ema_fast_period, adjust=False).mean()
+        ema_slow = close.ewm(span=self.ema_slow_period, adjust=False).mean()
+
+        prev_close = close.shift(1)
+        tr = pd.concat([(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+        atr = tr.rolling(self.atr_period).mean()
+
+        ema_fast_val = float(ema_fast.iloc[-1])
+        ema_slow_val = float(ema_slow.iloc[-1])
+        atr_val = float(atr.iloc[-1]) if not math.isnan(float(atr.iloc[-1])) else float((high - low).tail(self.atr_period).mean())
+        close_val = float(close.iloc[-1])
+
+        trend_strength = abs(ema_fast_val - ema_slow_val) / max(atr_val, 1e-8)
+        volatility_score = atr_val / max(close_val, 1e-8)
+
+        if volatility_score >= self.high_vol_threshold:
+            regime = MarketRegimeType.HIGH_VOLATILITY
+        elif volatility_score <= self.low_vol_threshold:
+            regime = MarketRegimeType.LOW_VOLATILITY
+        elif trend_strength <= self.choppy_threshold:
+            regime = MarketRegimeType.CHOPPY
+        elif ema_fast_val > ema_slow_val and trend_strength >= self.trend_threshold:
+            regime = MarketRegimeType.TRENDING_BULLISH
+        elif ema_fast_val < ema_slow_val and trend_strength >= self.trend_threshold:
+            regime = MarketRegimeType.TRENDING_BEARISH
+        else:
+            regime = MarketRegimeType.RANGING
+
+        confidence = min(0.99, max(0.3, (trend_strength * 0.2) + (volatility_score * 10)))
+        is_tradeable = regime not in (MarketRegimeType.CHOPPY,)
+
+        features = {
+            "ema_fast": ema_fast_val,
+            "ema_slow": ema_slow_val,
+            "atr": atr_val,
+            "trend_strength": trend_strength,
+            "volatility_score": volatility_score,
+        }
+
+        context.regime_result = RegimeResult(
+            regime=regime,
+            confidence=confidence,
+            is_tradeable=is_tradeable,
+            reason=None,
+            features=features,
+        )
+
+        symbol_id = ingestion.get("symbol_id")
+        timeframe_id = (ingestion.get("timeframe_ids") or {}).get(context.timeframe)
+        if symbol_id and timeframe_id:
+            self.regime_repository.create_market_regime(
+                symbol_id=symbol_id,
+                timeframe_id=timeframe_id,
+                regime=regime.value,
+                confidence=confidence,
+                detected_at=context.candle_time,
+                features=features,
+            )
+            self.regime_repository.session.commit()
+
+        return context

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.database.models import HistoricalEdgeValidation, Signal, SignalValidation
@@ -115,3 +115,19 @@ class SignalRepository:
             stmt = stmt.where(Signal.timeframe_id == timeframe_id)
         stmt = stmt.order_by(Signal.signal_time.desc()).limit(1)
         return self.session.execute(stmt).scalar_one_or_none()
+
+    def count_signals_by_candle(
+        self,
+        symbol_id: uuid.UUID,
+        timeframe_id: uuid.UUID,
+        signal_time: datetime,
+        exclude_signal_id: uuid.UUID | None = None,
+    ) -> int:
+        stmt = select(func.count(Signal.id)).where(
+            Signal.symbol_id == symbol_id,
+            Signal.timeframe_id == timeframe_id,
+            Signal.signal_time == signal_time,
+        )
+        if exclude_signal_id is not None:
+            stmt = stmt.where(Signal.id != exclude_signal_id)
+        return int(self.session.execute(stmt).scalar_one())

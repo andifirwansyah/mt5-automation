@@ -89,6 +89,9 @@ class TradingContext:
     def reject(self, reason: str, details: dict[str, Any] | None = None) -> None:
         """Mark context as rejected and store explicit reason/details."""
 
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("rejection_reason must be non-empty string")
+
         self.rejected = True
-        self.rejection_reason = reason
+        self.rejection_reason = reason.strip()
         self.rejection_details = details or {}

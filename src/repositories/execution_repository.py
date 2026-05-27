@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.database.models import ApprovalRequest, BrokerHealthCheck, ExecutionDecision, ExecutionOrder
@@ -148,3 +149,21 @@ class ExecutionRepository:
         self.session.add(entity)
         self.session.flush()
         return entity
+
+    def count_pending_approval_requests(self) -> int:
+        return int(
+            self.session.execute(
+                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "PENDING")
+            ).scalar_one()
+        )
+
+    def count_duplicate_execution_risk(self) -> int:
+        """Count signals that have more than one active execution order attempt."""
+
+        rows = self.session.execute(
+            select(ExecutionOrder.signal_id)
+            .where(ExecutionOrder.status.in_(["CREATED", "SUBMITTED", "FILLED"]))
+            .group_by(ExecutionOrder.signal_id)
+            .having(func.count(ExecutionOrder.id) > 1)
+        ).all()
+        return int(len(rows))

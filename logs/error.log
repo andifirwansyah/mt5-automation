@@ -1,0 +1,48 @@
+2026-05-27 18:21:51.804 | ERROR    | __main__:main:269 - Bot worker crashed: MetaTrader5 package is not available in this environment.
+Traceback (most recent call last):
+
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+
+  File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/bot_worker.py", line 302, in <module>
+    main()
+    └ <function main at 0x1095816f0>
+
+> File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/bot_worker.py", line 101, in main
+    if not mt5_connection.connect():
+           │              └ <function MT5Connection.connect at 0x10b845f30>
+           └ <src.infrastructure.mt5.mt5_connection.MT5Connection object at 0x10fd53230>
+
+  File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/infrastructure/mt5/mt5_connection.py", line 36, in connect
+    self._require_mt5()
+    │    └ <staticmethod(<function MT5Connection._require_mt5 at 0x10b845dd0>)>
+    └ <src.infrastructure.mt5.mt5_connection.MT5Connection object at 0x10fd53230>
+
+  File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/infrastructure/mt5/mt5_connection.py", line 33, in _require_mt5
+    raise RuntimeError("MetaTrader5 package is not available in this environment.")
+
+RuntimeError: MetaTrader5 package is not available in this environment.
+2026-05-27 18:21:51.813 | ERROR    | __main__:main:294 - Failed to shutdown MT5
+Traceback (most recent call last):
+
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+
+  File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/bot_worker.py", line 302, in <module>
+    main()
+    └ <function main at 0x1095816f0>
+
+> File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/bot_worker.py", line 292, in main
+    mt5_connection.shutdown()
+    │              └ <function MT5Connection.shutdown at 0x10b846090>
+    └ <src.infrastructure.mt5.mt5_connection.MT5Connection object at 0x10fd53230>
+
+  File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/infrastructure/mt5/mt5_connection.py", line 41, in shutdown
+    self._require_mt5()
+    │    └ <staticmethod(<function MT5Connection._require_mt5 at 0x10b845dd0>)>
+    └ <src.infrastructure.mt5.mt5_connection.MT5Connection object at 0x10fd53230>
+
+  File "/Users/mac/Documents/andifirwansyah/ai-trading-automation/src/infrastructure/mt5/mt5_connection.py", line 33, in _require_mt5
+    raise RuntimeError("MetaTrader5 package is not available in this environment.")
+
+RuntimeError: MetaTrader5 package is not available in this environment.

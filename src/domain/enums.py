@@ -29,6 +29,10 @@ class ValidationStatus(StrEnum):
 class ExecutionDecisionStatus(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    APPROVE_AUTO = "APPROVE_AUTO"
+    DRY_RUN = "DRY_RUN"
+    REQUIRE_MANUAL_APPROVAL = "REQUIRE_MANUAL_APPROVAL"
+    KILL_SWITCH_ACTIVE = "KILL_SWITCH_ACTIVE"
 
 
 class OrderExecutionStatus(StrEnum):

@@ -18,4 +18,4 @@ class ExecutionDecision:
 
     @property
     def approved(self) -> bool:
-        return self.status == ExecutionDecisionStatus.APPROVED
+        return self.status in (ExecutionDecisionStatus.APPROVED, ExecutionDecisionStatus.APPROVE_AUTO)

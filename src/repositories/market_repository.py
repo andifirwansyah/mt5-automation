@@ -6,10 +6,12 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from src.infrastructure.database.models import Candle, DataQualityCheck, Symbol, TickSnapshot, Timeframe
+from src.infrastructure.database.models import Candle, DataQualityCheck, MarketEvent, MarketEventFilter, Symbol, TickSnapshot, Timeframe
 
 
 class MarketRepository:
@@ -47,6 +49,20 @@ class MarketRepository:
     def get_timeframe_by_code(self, code: str) -> Timeframe | None:
         stmt = select(Timeframe).where(Timeframe.code == code).limit(1)
         return self.session.execute(stmt).scalar_one_or_none()
+
+    def get_or_create_timeframe(self, code: str, minutes: int, description: str | None = None) -> Timeframe:
+        timeframe = self.get_timeframe_by_code(code)
+        if timeframe is not None:
+            return timeframe
+
+        timeframe = Timeframe(
+            code=code,
+            minutes=minutes,
+            description=description or code,
+        )
+        self.session.add(timeframe)
+        self.session.flush()
+        return timeframe
 
     def upsert_candle(
         self,
@@ -178,3 +194,40 @@ class MarketRepository:
             .limit(limit)
         )
         return list(self.session.execute(stmt).scalars().all())
+
+    def get_active_market_events(
+        self,
+        window_start: datetime,
+        window_end: datetime,
+        symbol_id: uuid.UUID | None = None,
+        severity: str | None = None,
+    ) -> list[MarketEvent]:
+        stmt = select(MarketEvent).where(
+            MarketEvent.is_active.is_(True),
+            or_(MarketEvent.starts_at.is_(None), MarketEvent.starts_at <= window_end),
+            or_(MarketEvent.ends_at.is_(None), MarketEvent.ends_at >= window_start),
+        )
+        if symbol_id is not None:
+            stmt = stmt.where(or_(MarketEvent.symbol_id == symbol_id, MarketEvent.symbol_id.is_(None)))
+        if severity is not None:
+            stmt = stmt.where(MarketEvent.severity == severity)
+        return list(self.session.execute(stmt).scalars().all())
+
+    def create_market_event_filter(
+        self,
+        filter_name: str,
+        action: str,
+        market_event_id: uuid.UUID | None = None,
+        reason: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> MarketEventFilter:
+        entity = MarketEventFilter(
+            market_event_id=market_event_id,
+            filter_name=filter_name,
+            action=action,
+            reason=reason,
+            details=details or {},
+        )
+        self.session.add(entity)
+        self.session.flush()
+        return entity
