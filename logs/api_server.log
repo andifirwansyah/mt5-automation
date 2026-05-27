@@ -1,0 +1,4 @@
+2026-05-27 14:01:16.218 | INFO     | __main__:main:17 - Bot worker started
+2026-05-27 14:01:16.219 | INFO     | __main__:main:18 - Runtime flags: dry_run=True, auto_trade=True, approval_required=False
+2026-05-27 14:02:01.943 | INFO     | __main__:main:17 - Bot worker started
+2026-05-27 14:02:01.943 | INFO     | __main__:main:18 - Runtime flags: dry_run=True, auto_trade=True, approval_required=False
