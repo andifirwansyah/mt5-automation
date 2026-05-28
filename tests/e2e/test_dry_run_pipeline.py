@@ -24,7 +24,7 @@ from src.engines.signal_validator import SignalValidator
 from src.engines.strategy_engine import StrategyEngine
 from src.engines.strategy_selector import StrategySelector
 from src.engines.trade_journal_engine import TradeJournalEngine
-from src.infrastructure.database.models import Strategy, TradeJournal
+from src.infrastructure.database.models import Strategy, StrategyConfig, TradeJournal
 from src.orchestrators.trading_orchestrator import TradingOrchestrator
 from src.pipeline.pipeline_step import PipelineStep
 from src.pipeline.trading_context import TradingContext
@@ -186,6 +186,40 @@ def test_e2e_dry_run_orchestrator_pipeline(db_session, unique_suffix: str) -> No
         db_session.add(strategy)
         db_session.commit()
 
+    symbol_name = f"XAUUSD_E2E_{unique_suffix}"
+    symbol_row = market_repo.get_or_create_symbol(name=symbol_name)
+    timeframe_row = market_repo.get_or_create_timeframe(code="M5", minutes=5)
+    cfg = db_session.execute(
+        select(StrategyConfig).where(
+            StrategyConfig.strategy_id == strategy.id,
+            StrategyConfig.symbol_id == symbol_row.id,
+            StrategyConfig.timeframe_id == timeframe_row.id,
+        )
+    ).scalar_one_or_none()
+    permissive_config = {
+        "lot_size": 0.01,
+        "sl_atr_multiplier": 1.5,
+        "tp_atr_multiplier": 2.5,
+        "pullback_max_distance_atr": 5.0,
+        "confirmation_min_body_atr": 0.0,
+        "pullback_touch_required": False,
+        "confirmation_bars": 1,
+    }
+    if cfg is None:
+        cfg = StrategyConfig(
+            strategy_id=strategy.id,
+            symbol_id=symbol_row.id,
+            timeframe_id=timeframe_row.id,
+            config=permissive_config,
+            is_active=True,
+        )
+        db_session.add(cfg)
+    else:
+        cfg.config = permissive_config
+        cfg.is_active = True
+        db_session.add(cfg)
+    db_session.commit()
+
     bot = bot_repo.create_bot_instance(
         instance_name=f"e2e-dry-run-{unique_suffix}",
         host_name="localhost",
@@ -235,7 +269,7 @@ def test_e2e_dry_run_orchestrator_pipeline(db_session, unique_suffix: str) -> No
     orchestrator = TradingOrchestrator(steps=steps, engine_audit_service=engine_audit)
     midday = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
     event = {
-        "symbol": f"XAUUSD_E2E_{unique_suffix}",
+            "symbol": symbol_name,
         "timeframe": "M5",
         "candle_time": midday.isoformat(),
         "open": 2300.0,

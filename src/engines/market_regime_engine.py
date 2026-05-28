@@ -71,6 +71,7 @@ class MarketRegimeEngine(PipelineStep):
             return context
 
         close = pd.to_numeric(df["close"], errors="coerce")
+        open_price = pd.to_numeric(df["open"], errors="coerce") if "open" in df.columns else close.shift(1).fillna(close)
         high = pd.to_numeric(df["high"], errors="coerce")
         low = pd.to_numeric(df["low"], errors="coerce")
 
@@ -88,6 +89,49 @@ class MarketRegimeEngine(PipelineStep):
 
         trend_strength = abs(ema_fast_val - ema_slow_val) / max(atr_val, 1e-8)
         volatility_score = atr_val / max(close_val, 1e-8)
+
+        breakout_lookback = 20
+        range_lookback = 30
+
+        prev_range_high = None
+        prev_range_low = None
+        prev_range_width = None
+        if len(df) >= breakout_lookback + 1:
+            prev_window = df.iloc[-(breakout_lookback + 1) : -1]
+            prev_range_high = float(pd.to_numeric(prev_window["high"], errors="coerce").max())
+            prev_range_low = float(pd.to_numeric(prev_window["low"], errors="coerce").min())
+            prev_range_width = prev_range_high - prev_range_low
+
+        range_high = None
+        range_low = None
+        range_mid = None
+        range_width = None
+        if len(df) >= range_lookback:
+            range_window = df.iloc[-range_lookback:]
+            range_high = float(pd.to_numeric(range_window["high"], errors="coerce").max())
+            range_low = float(pd.to_numeric(range_window["low"], errors="coerce").min())
+            range_mid = (range_high + range_low) / 2.0
+            range_width = range_high - range_low
+
+        last_open = float(open_price.iloc[-1])
+        last_close = close_val
+        last_high = float(high.iloc[-1])
+        last_low = float(low.iloc[-1])
+        last_body = abs(last_close - last_open)
+        body_atr_ratio = last_body / max(atr_val, 1e-8)
+
+        prev_open = float(open_price.iloc[-2]) if len(open_price) >= 2 else last_open
+        prev_close = float(close.iloc[-2]) if len(close) >= 2 else last_close
+        prev_body = abs(prev_close - prev_open)
+
+        last_direction = 1 if last_close > last_open else (-1 if last_close < last_open else 0)
+        prev_direction = 1 if prev_close > prev_open else (-1 if prev_close < prev_open else 0)
+
+        confirmation_bullish = bool(last_direction > 0 and prev_direction >= 0 and last_close > ema_fast_val)
+        confirmation_bearish = bool(last_direction < 0 and prev_direction <= 0 and last_close < ema_fast_val)
+
+        pullback_distance_to_ema_fast_atr = abs(last_close - ema_fast_val) / max(atr_val, 1e-8)
+        pullback_touched_ema_fast = bool(last_low <= ema_fast_val <= last_high)
 
         if volatility_score >= self.high_vol_threshold:
             regime = MarketRegimeType.HIGH_VOLATILITY
@@ -119,6 +163,30 @@ class MarketRegimeEngine(PipelineStep):
             "atr": atr_val,
             "trend_strength": trend_strength,
             "volatility_score": volatility_score,
+            "last_open": last_open,
+            "last_close": last_close,
+            "last_high": last_high,
+            "last_low": last_low,
+            "last_body": last_body,
+            "prev_open": prev_open,
+            "prev_close": prev_close,
+            "prev_body": prev_body,
+            "body_atr_ratio": body_atr_ratio,
+            "last_direction": last_direction,
+            "prev_direction": prev_direction,
+            "confirmation_bullish": confirmation_bullish,
+            "confirmation_bearish": confirmation_bearish,
+            "pullback_distance_to_ema_fast_atr": pullback_distance_to_ema_fast_atr,
+            "pullback_touched_ema_fast": pullback_touched_ema_fast,
+            "prev_range_high": prev_range_high,
+            "prev_range_low": prev_range_low,
+            "prev_range_width": prev_range_width,
+            "prev_range_lookback_bars": breakout_lookback,
+            "range_high": range_high,
+            "range_low": range_low,
+            "range_mid": range_mid,
+            "range_width": range_width,
+            "range_lookback_bars": range_lookback,
         }
 
         context.regime_result = RegimeResult(

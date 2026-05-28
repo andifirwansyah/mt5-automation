@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from src.pipeline.pipeline_step import PipelineStep
 from src.pipeline.trading_context import TradingContext
-from src.strategies import EmaAtrTrendStrategy, RangeReversionStrategy, VolatilityBreakoutStrategy
+from src.strategies import EmaAtrTrendStrategy, LiquiditySweepReversalStrategy, RangeReversionStrategy, VolatilityBreakoutStrategy
 from src.strategies.base_strategy import BaseStrategy
 
 
@@ -23,6 +23,7 @@ class StrategyEngine(PipelineStep):
             "EMA_ATR_TREND": EmaAtrTrendStrategy(),
             "VOLATILITY_BREAKOUT": VolatilityBreakoutStrategy(),
             "RANGE_REVERSION": RangeReversionStrategy(),
+            "LIQUIDITY_SWEEP_REVERSAL": LiquiditySweepReversalStrategy(),
         })
 
     def _resolve_strategy(self, strategy_code: str) -> BaseStrategy | None:

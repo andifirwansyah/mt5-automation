@@ -47,8 +47,31 @@ class StrategySelector(PipelineStep):
         if regime == MarketRegimeType.RANGING:
             return ["RANGE_REVERSION", "REVERSION", "MEAN_REVERSION"]
         if regime == MarketRegimeType.HIGH_VOLATILITY:
-            return ["VOLATILITY_BREAKOUT", "BREAKOUT"]
+            # Keep VOLATILITY_BREAKOUT as primary; LIQUIDITY_SWEEP_REVERSAL as secondary.
+            return [
+                "VOLATILITY_BREAKOUT",
+                "LIQUIDITY_SWEEP_REVERSAL",
+                "BREAKOUT",
+                "LIQUIDITY",
+                "SWEEP",
+                "REVERSAL",
+            ]
         return []
+
+    @staticmethod
+    def _ranked_candidates(strategies: list, preferred_tokens: list[str]) -> list:
+        ranked: list = []
+        seen_ids: set[str] = set()
+        for token in preferred_tokens:
+            token_upper = token.upper()
+            for strategy in strategies:
+                sid = str(strategy.id)
+                if sid in seen_ids:
+                    continue
+                if token_upper in strategy.code.upper():
+                    ranked.append(strategy)
+                    seen_ids.add(sid)
+        return ranked
 
     def run(self, context: TradingContext) -> TradingContext:
         if context.regime_result is None:
@@ -111,7 +134,7 @@ class StrategySelector(PipelineStep):
             )
             return context
 
-        candidates = [s for s in strategies if any(token in s.code.upper() for token in preferred_tokens)]
+        candidates = self._ranked_candidates(strategies=strategies, preferred_tokens=preferred_tokens)
         if not candidates:
             context.reject(
                 NO_STRATEGY_MATCHED_REGIME,

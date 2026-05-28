@@ -345,6 +345,7 @@ def test_strategy_selector_selects_volatility_breakout_for_high_volatility() -> 
             self.session = DummySession()
             self._rows = [
                 _StrategyRow(id=uuid.uuid4(), code="EMA_ATR_TREND", name="EMA ATR"),
+                _StrategyRow(id=uuid.uuid4(), code="LIQUIDITY_SWEEP_REVERSAL", name="LIQUIDITY"),
                 _StrategyRow(id=uuid.uuid4(), code="VOLATILITY_BREAKOUT", name="BREAKOUT"),
             ]
 
@@ -370,6 +371,43 @@ def test_strategy_selector_selects_volatility_breakout_for_high_volatility() -> 
     assert result.rejected is False
     assert result.strategy_selection is not None
     assert result.strategy_selection.strategy_code == "VOLATILITY_BREAKOUT"
+
+
+def test_strategy_selector_high_volatility_fallback_to_liquidity_when_breakout_config_blocks() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+            self.breakout_id = uuid.uuid4()
+            self.liquidity_id = uuid.uuid4()
+            self._rows = [
+                _StrategyRow(id=self.breakout_id, code="VOLATILITY_BREAKOUT", name="BREAKOUT"),
+                _StrategyRow(id=self.liquidity_id, code="LIQUIDITY_SWEEP_REVERSAL", name="LIQUIDITY"),
+            ]
+
+        def get_active_strategies(self):
+            return self._rows
+
+        def get_active_strategy_configs(self, strategy_id, **_kwargs):
+            if strategy_id == self.breakout_id:
+                return [_StrategyConfigRow(config={"allow_high_volatility": False})]
+            return [_StrategyConfigRow(config={"allow_high_volatility": True})]
+
+        @staticmethod
+        def create_strategy_selection(**_kwargs):
+            return None
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.HIGH_VOLATILITY,
+        confidence=0.9,
+        is_tradeable=True,
+        features={"volatility_score": 0.05},
+    )
+    result = StrategySelector(strategy_repository=StrategyRepo()).run(context)
+    assert result.rejected is False
+    assert result.strategy_selection is not None
+    assert result.strategy_selection.strategy_code == "LIQUIDITY_SWEEP_REVERSAL"
 
 
 def test_signal_validator_rejects_duplicate_signal() -> None:
