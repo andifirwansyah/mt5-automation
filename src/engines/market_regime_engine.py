@@ -33,8 +33,8 @@ class MarketRegimeEngine(PipelineStep):
         atr_period: int = 14,
         trend_threshold: float = 0.8,
         choppy_threshold: float = 0.3,
-        high_vol_threshold: float = 0.01,
-        low_vol_threshold: float = 0.002,
+        high_vol_threshold: float = 0.003,
+        low_vol_threshold: float = 0.001,
     ) -> None:
         self.regime_repository = regime_repository
         self.ema_fast_period = ema_fast_period
@@ -135,14 +135,14 @@ class MarketRegimeEngine(PipelineStep):
 
         if volatility_score >= self.high_vol_threshold:
             regime = MarketRegimeType.HIGH_VOLATILITY
-        elif volatility_score <= self.low_vol_threshold:
-            regime = MarketRegimeType.LOW_VOLATILITY
         elif trend_strength <= self.choppy_threshold:
             regime = MarketRegimeType.CHOPPY
         elif ema_fast_val > ema_slow_val and trend_strength >= self.trend_threshold:
             regime = MarketRegimeType.TRENDING_BULLISH
         elif ema_fast_val < ema_slow_val and trend_strength >= self.trend_threshold:
             regime = MarketRegimeType.TRENDING_BEARISH
+        elif volatility_score <= self.low_vol_threshold:
+            regime = MarketRegimeType.LOW_VOLATILITY
         else:
             regime = MarketRegimeType.RANGING
 
