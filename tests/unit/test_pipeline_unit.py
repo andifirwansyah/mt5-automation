@@ -63,6 +63,15 @@ class _StrategyConfigRow:
     config: dict
 
 
+@dataclass
+class _PerformanceRow:
+    total_trades: int
+    win_rate: float
+    net_profit: float
+    profit_factor: float
+    details: dict
+
+
 def _context() -> TradingContext:
     return TradingContext.from_candle_event(
         {
@@ -408,6 +417,124 @@ def test_strategy_selector_high_volatility_fallback_to_liquidity_when_breakout_c
     assert result.rejected is False
     assert result.strategy_selection is not None
     assert result.strategy_selection.strategy_code == "LIQUIDITY_SWEEP_REVERSAL"
+
+
+def test_strategy_selector_weighted_performance_overrides_default_high_volatility_priority() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+            self.breakout_id = uuid.uuid4()
+            self.liquidity_id = uuid.uuid4()
+            self._rows = [
+                _StrategyRow(id=self.breakout_id, code="VOLATILITY_BREAKOUT", name="BREAKOUT"),
+                _StrategyRow(id=self.liquidity_id, code="LIQUIDITY_SWEEP_REVERSAL", name="LIQUIDITY"),
+            ]
+            self._performance = {
+                self.breakout_id: [
+                    _PerformanceRow(
+                        total_trades=20,
+                        win_rate=0.40,
+                        net_profit=-100.0,
+                        profit_factor=0.7,
+                        details={},
+                    )
+                ],
+                self.liquidity_id: [
+                    _PerformanceRow(
+                        total_trades=20,
+                        win_rate=0.55,
+                        net_profit=80.0,
+                        profit_factor=1.8,
+                        details={},
+                    )
+                ],
+            }
+
+        def get_active_strategies(self):
+            return self._rows
+
+        def get_active_strategy_configs(self, **_kwargs):
+            return [_StrategyConfigRow(config={"allow_high_volatility": True, "lot_size": 0.01})]
+
+        def get_recent_performance_by_strategy(self, strategy_id, limit=30):
+            return self._performance.get(strategy_id, [])[:limit]
+
+        @staticmethod
+        def create_strategy_selection(**_kwargs):
+            return None
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.HIGH_VOLATILITY,
+        confidence=0.88,
+        is_tradeable=True,
+        features={"volatility_score": 0.05},
+    )
+    result = StrategySelector(strategy_repository=StrategyRepo()).run(context)
+    assert result.rejected is False
+    assert result.strategy_selection is not None
+    assert result.strategy_selection.strategy_code == "LIQUIDITY_SWEEP_REVERSAL"
+    assert result.strategy_selection.details.get("selector_mode") == "weighted_performance"
+
+
+def test_strategy_selector_falls_back_when_weighted_performance_sample_is_too_low() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+            self.ema_id = uuid.uuid4()
+            self.range_id = uuid.uuid4()
+            self._rows = [
+                _StrategyRow(id=self.ema_id, code="EMA_ATR_TREND", name="EMA ATR"),
+                _StrategyRow(id=self.range_id, code="TREND_ALT", name="TREND ALT"),
+            ]
+            self._performance = {
+                self.ema_id: [
+                    _PerformanceRow(
+                        total_trades=1,
+                        win_rate=1.0,
+                        net_profit=10.0,
+                        profit_factor=2.0,
+                        details={},
+                    )
+                ],
+                self.range_id: [
+                    _PerformanceRow(
+                        total_trades=1,
+                        win_rate=0.0,
+                        net_profit=-10.0,
+                        profit_factor=0.2,
+                        details={},
+                    )
+                ],
+            }
+
+        def get_active_strategies(self):
+            return self._rows
+
+        def get_active_strategy_configs(self, **_kwargs):
+            return [_StrategyConfigRow(config={"lot_size": 0.01})]
+
+        def get_recent_performance_by_strategy(self, strategy_id, limit=30):
+            return self._performance.get(strategy_id, [])[:limit]
+
+        @staticmethod
+        def create_strategy_selection(**_kwargs):
+            return None
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.TRENDING_BULLISH,
+        confidence=0.80,
+        is_tradeable=True,
+        features={"trend_strength": 1.2},
+    )
+    result = StrategySelector(strategy_repository=StrategyRepo()).run(context)
+    assert result.rejected is False
+    assert result.strategy_selection is not None
+    assert result.strategy_selection.strategy_code == "EMA_ATR_TREND"
+    assert result.strategy_selection.details.get("selector_mode") == "fallback_token_order"
 
 
 def test_signal_validator_rejects_duplicate_signal() -> None:

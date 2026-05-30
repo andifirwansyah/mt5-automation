@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.infrastructure.database.models import Strategy, StrategyConfig, StrategySelection
+from src.infrastructure.database.models import PerformanceByStrategy, Strategy, StrategyConfig, StrategySelection
 
 
 class StrategyRepository:
@@ -60,3 +60,16 @@ class StrategyRepository:
         self.session.add(entity)
         self.session.flush()
         return entity
+
+    def get_recent_performance_by_strategy(
+        self,
+        strategy_id: uuid.UUID,
+        limit: int = 30,
+    ) -> list[PerformanceByStrategy]:
+        stmt = (
+            select(PerformanceByStrategy)
+            .where(PerformanceByStrategy.strategy_id == strategy_id)
+            .order_by(PerformanceByStrategy.period_end.desc(), PerformanceByStrategy.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.session.execute(stmt).scalars().all())
