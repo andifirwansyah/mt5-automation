@@ -1,211 +1,91 @@
-# AI Trading Automation
+# AI Trading Automation (Bootstrap)
 
-Project ini adalah sistem backend dan engine untuk trading automation XAUUSD berbasis data OHLCV multi-timeframe.
+Bootstrap project untuk AI Trading Automation production-grade berbasis Python, FastAPI, PostgreSQL, dan MetaTrader 5.
 
-Project ini **belum masuk fase live trading real money**. Fase awal fokus ke engine, kontrak data, validasi, risk control, paper execution, journal, dan performance analyzer.
+## 1) Setup Virtual Environment (Windows PowerShell)
 
-## Quick Start
-
-### 1) Prerequisites
-
-- Python 3.11+
-- MySQL berjalan di lokal (default: `127.0.0.1:3306`)
-- Dataset OHLCV tersedia di folder `dataset/{D1,H4,H1,M30,M15,M5}`
-
-### 2) Setup environment
-
-Buat virtualenv dan install dependency:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-### 3) Konfigurasi `.env`
+## 2) Konfigurasi Environment
 
-Pastikan `.env` terisi minimal:
+Copy file `.env.example` menjadi `.env`, lalu sesuaikan nilainya:
 
-```env
-DB_CONNECTION=mysql
-DATABASE_URL=mysql+pymysql://root:%40Andi12345@127.0.0.1:3306/ai_trading_automation?charset=utf8mb4
-
-TRADE_JOURNAL_BACKEND=db
-PAPER_EXECUTION_BACKEND=db
-STRICT_DB_RUNTIME=true
-
-TRADING_MODE=paper
-ENABLE_LIVE_TRADING=false
+```powershell
+copy .env.example .env
 ```
 
-> `STRICT_DB_RUNTIME=true` artinya app wajib terkoneksi DB saat startup (tanpa fallback memory/file).
+Hal yang paling penting disesuaikan:
 
-### 4) Jalankan migration
+- `DATABASE_URL`
+- `MT5_LOGIN`
+- `MT5_PASSWORD`
+- `MT5_SERVER`
+- `MT5_PATH`
 
-```bash
-alembic -c alembic.ini upgrade head
+Mode awal aman:
+
+- `DRY_RUN=true`
+- `AUTO_TRADE=true`
+- `APPROVAL_REQUIRED=false`
+
+## 3) Menjalankan Bot Worker
+
+```powershell
+python -m src.bot_worker
 ```
 
-Verifikasi migration:
+Atau via script:
 
-```bash
-alembic -c alembic.ini current
+```powershell
+scripts\run_bot.bat
 ```
 
-### 5) Jalankan API
+## 4) Menjalankan API Server
 
-```bash
-uvicorn ai_trading_automation.api.app:app --reload --app-dir src
+```powershell
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 ```
 
-Atau lebih singkat:
+Atau via script:
 
-```bash
-make run
+```powershell
+scripts\run_api.bat
 ```
 
----
+## 5) Struktur Project
 
-## Endpoint Utama (Simulasi Manual)
-
-### Health
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-### Pipeline status
-
-```bash
-curl http://127.0.0.1:8000/pipeline/status
-```
-
-### Trigger simulasi trading (manual)
-
-```bash
-curl -X POST "http://127.0.0.1:8000/pipeline/run" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dataset_path": "dataset",
-    "symbol": "XAUUSD",
-    "timeframe": "H1",
-    "account_balance": 10000,
-    "requested_risk_percent": 0.5,
-    "daily_realized_loss": 0.0,
-    "open_positions_count": 0,
-    "persist_performance_report": true
-  }'
-```
-
-### Lihat hasil run terakhir
-
-```bash
-curl http://127.0.0.1:8000/pipeline/last-run
-```
-
----
-
-## Testing
-
-Jalankan seluruh test:
-
-```bash
-pytest tests -q
-```
-
-Atau:
-
-```bash
-make test
-```
-
-Atau test targeted:
-
-```bash
-pytest tests/api tests/core tests/trade_journal tests/paper_execution -q
-```
-
----
-
-## Output & Persisted Artifacts
-
-- Journal file mode (jika backend `file`):
-  - `outputs/journals/trade_journal.jsonl`
-- Performance report file:
-  - `outputs/reports/performance_report.json`
-- DB mode (recommended):
-  - tabel `pipeline_runs`
-  - tabel `trade_journal_entries`
-  - tabel `paper_orders`
-
----
-
-## Troubleshooting
-
-### 1) Error startup saat strict mode
-
-Jika `STRICT_DB_RUNTIME=true`, app akan gagal start jika DB tidak siap.
-
-Cek:
-- MySQL aktif
-- `DATABASE_URL` benar
-- migration sudah dijalankan
-
-### 2) Error Alembic terkait URL `%`
-
-Gunakan password URL-encoded (`@` -> `%40`) pada `DATABASE_URL`.
-
-### 3) Pipeline gagal di stage market_data/validation
-
-Pastikan dataset timeframe dan format OHLCV valid.
-
-## Cara Kerja AI-Workspace
-
-Semua dokumen AI project disimpan di folder:
-
-```txt
-.ai/
-```
-
-Source code disimpan di folder:
-
-```txt
+```text
 src/
-tests/
+├── bot_worker.py
+├── api_server.py
+├── config/
+├── api/
+├── orchestrators/
+├── pipeline/
+├── engines/
+├── strategies/
+├── domain/
+├── infrastructure/
+│   ├── mt5/
+│   ├── database/
+│   └── notification/
+├── repositories/
+├── services/
+├── schemas/
+└── utils/
 ```
 
-AI agent tidak boleh membuat file sembarangan di root project. Jika perlu membuat/mengubah file, agent wajib mengikuti:
+## 6) Logging Output
 
-```txt
-AGENTS.md
-.ai/project-map.md
-.ai/docs/02-feature-boundary.md
-.ai/task-list.md
-```
+Aplikasi akan membuat log files di folder `logs/`:
 
-## Fase Awal
-
-1. Bootstrap project
-2. Dataset loader
-3. OHLCV validation
-4. Market regime engine
-5. Strategy selector
-6. Strategy engine shell
-7. Signal contract
-8. Signal validator
-9. Risk engine
-10. Pre-trade simulation
-11. Execution gate
-12. Paper execution engine
-13. Position monitor
-14. Trade journal
-15. Performance analyzer
-16. API service shell
-
-## Prinsip Utama
-
-- Jangan live trading dulu.
-- Jangan prediction-first.
-- Semua sinyal harus melewati validator, risk engine, simulation, dan execution gate.
-- Semua keputusan harus bisa dijelaskan dan dicatat.
-- Semua module punya boundary yang jelas.
+- `logs/bot_worker.log`
+- `logs/api_server.log`
+- `logs/execution.log`
+- `logs/safety.log`
+- `logs/error.log`
