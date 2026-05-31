@@ -25,6 +25,9 @@ class AppSettings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
 
+    dashboard_auth_secret: str = Field(default="", alias="DASHBOARD_AUTH_SECRET")
+    auth_token_ttl_seconds: int = Field(default=3600, alias="AUTH_TOKEN_TTL_SECONDS")
+
     database_url: str = Field(
         default="postgresql+psycopg://postgres:postgres@localhost:5432/ai_trading",
         alias="DATABASE_URL",

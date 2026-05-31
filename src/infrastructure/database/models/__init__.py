@@ -1,6 +1,7 @@
 """Database models package."""
 
 from src.infrastructure.database.models.account_models import AccountSnapshot, TradingAccount
+from src.infrastructure.database.models.auth_models import DashboardTokenRevocation, DashboardUser
 from src.infrastructure.database.models.bot_models import BotInstance, BotRuntimeState, EngineRun
 from src.infrastructure.database.models.execution_models import ApprovalRequest, BrokerHealthCheck, ExecutionDecision, ExecutionOrder
 from src.infrastructure.database.models.journal_models import TradeJournal
@@ -19,6 +20,8 @@ __all__ = [
     "EngineRun",
     "TradingAccount",
     "AccountSnapshot",
+    "DashboardUser",
+    "DashboardTokenRevocation",
     "Symbol",
     "Timeframe",
     "Candle",

@@ -1,6 +1,7 @@
 """Repository layer package for data access abstraction."""
 
 from src.repositories.account_repository import AccountRepository
+from src.repositories.auth_repository import AuthRepository
 from src.repositories.bot_repository import BotRepository
 from src.repositories.execution_repository import ExecutionRepository
 from src.repositories.journal_repository import JournalRepository
@@ -16,6 +17,7 @@ from src.repositories.strategy_repository import StrategyRepository
 __all__ = [
     "BotRepository",
     "AccountRepository",
+    "AuthRepository",
     "MarketRepository",
     "RegimeRepository",
     "StrategyRepository",
