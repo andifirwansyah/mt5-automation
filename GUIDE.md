@@ -130,6 +130,7 @@ python scripts/init_db.py
 
 ```powershell
 python scripts/seed_master_data.py
+python scripts/seed_dashboard_user.py --email "youremail@mail.com" --password "Pass234."
 ```
 
 Script ini akan seed:
