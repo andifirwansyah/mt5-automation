@@ -47,6 +47,8 @@ class HistoricalEdgeValidator(PipelineStep):
         symbol_id = self._as_uuid(ingestion.get("symbol_id"))
         timeframe_id = self._as_uuid((ingestion.get("timeframe_ids") or {}).get(context.timeframe))
         strategy_id = self._as_uuid((context.strategy_selection.details or {}).get("strategy_id") if context.strategy_selection else None)
+        technical_summary = (context.signal_contract.metadata or {}).get("technical_summary", {}) if context.signal_contract else {}
+        setup_signature = technical_summary.get("setup_signature") if isinstance(technical_summary, dict) else None
 
         if signal_id is None or symbol_id is None or timeframe_id is None or strategy_id is None:
             context.reject("HISTORICAL_EDGE_FAILED", {"message": "signal/symbol/timeframe/strategy references missing"})
@@ -97,13 +99,32 @@ class HistoricalEdgeValidator(PipelineStep):
         allow_low_sample = bool(self.settings.allow_low_sample_edge)
         min_win_rate = float(self.settings.edge_min_win_rate)
         min_profit_factor = float(self.settings.edge_min_profit_factor)
+        policy = (context.strategy_selection.config.get("historical_edge") if context.strategy_selection else None) or {}
+        hard_reject_on_low_sample = bool(policy.get("hard_reject_on_low_sample", False))
+        hard_reject_on_bad_edge = bool(policy.get("hard_reject_on_bad_edge", False))
+        warnings: list[str] = []
 
         if sample_size < min_sample:
-            passed = allow_low_sample
-            reason = "LOW_SAMPLE_ALLOWED" if allow_low_sample else "LOW_SAMPLE_REJECTED"
+            warnings.append("LOW_SAMPLE_SIZE")
+            if hard_reject_on_low_sample:
+                passed = False
+                reason = "LOW_SAMPLE_REJECTED"
+            else:
+                passed = True
+                reason = "LOW_SAMPLE_WARNING"
         else:
-            passed = (win_rate >= min_win_rate) and (profit_factor >= min_profit_factor)
-            reason = "EDGE_PASSED" if passed else "EDGE_THRESHOLD_FAILED"
+            quality_passed = (win_rate >= min_win_rate) and (profit_factor >= min_profit_factor)
+            if quality_passed:
+                passed = True
+                reason = "EDGE_PASSED"
+            else:
+                warnings.append("EDGE_THRESHOLD_FAILED")
+                if hard_reject_on_bad_edge:
+                    passed = False
+                    reason = "EDGE_THRESHOLD_REJECTED"
+                else:
+                    passed = True
+                    reason = "EDGE_BAD_WARNING"
 
         perf_row = session.execute(
             select(PerformanceByStrategy)
@@ -122,6 +143,12 @@ class HistoricalEdgeValidator(PipelineStep):
             "allow_low_sample_edge": allow_low_sample,
             "edge_min_win_rate": min_win_rate,
             "edge_min_profit_factor": min_profit_factor,
+            "setup_signature": setup_signature,
+            "warnings": warnings,
+            "policy": {
+                "hard_reject_on_low_sample": hard_reject_on_low_sample,
+                "hard_reject_on_bad_edge": hard_reject_on_bad_edge,
+            },
             "performance_reference": {
                 "period_start": perf_row.period_start.isoformat() if perf_row else None,
                 "period_end": perf_row.period_end.isoformat() if perf_row else None,

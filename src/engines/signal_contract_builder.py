@@ -34,6 +34,45 @@ class SignalContractBuilder(PipelineStep):
                 return None
         return None
 
+    @staticmethod
+    def _build_technical_summary(context: TradingContext) -> dict:
+        technical = context.technical_analysis
+        if technical is None:
+            return {}
+
+        active_patterns: list[str] = []
+        fvg_status_count = {"open": 0, "partial": 0, "filled": 0}
+        fvg_type_count = {"bullish_fvg": 0, "bearish_fvg": 0}
+
+        for evidence in technical.pattern_evidence:
+            if evidence.pattern_type in ("DOUBLE_TOP", "DOUBLE_BOTTOM"):
+                status = str((evidence.details or {}).get("status", "unknown")).lower()
+                pattern_name = evidence.pattern_type.lower()
+                active_patterns.append(f"{pattern_name}_{status}")
+            if evidence.pattern_type == "FVG":
+                for fvg in evidence.fvgs:
+                    fvg_status_count[fvg.status] = fvg_status_count.get(fvg.status, 0) + 1
+                    fvg_type_count[fvg.type] = fvg_type_count.get(fvg.type, 0) + 1
+                    active_patterns.append(f"{fvg.type}_{fvg.status}")
+
+        setup_key = active_patterns[0] if active_patterns else "no_pattern"
+        setup_signature = f"{context.strategy_selection.strategy_code}:{setup_key}:{context.symbol}:{context.timeframe}"
+
+        return {
+            "technical_bias": technical.bias,
+            "technical_score": technical.technical_score,
+            "buy_score": technical.buy_score,
+            "sell_score": technical.sell_score,
+            "active_patterns": active_patterns,
+            "fvg_summary": {
+                "count": fvg_status_count["open"] + fvg_status_count["partial"] + fvg_status_count["filled"],
+                "status_count": fvg_status_count,
+                "type_count": fvg_type_count,
+            },
+            "warnings": list(technical.warnings),
+            "setup_signature": setup_signature,
+        }
+
     def run(self, context: TradingContext) -> TradingContext:
         if context.raw_signal is None or context.strategy_selection is None:
             context.reject("NO_RAW_SIGNAL", {"message": "raw_signal and strategy_selection are required"})
@@ -42,6 +81,7 @@ class SignalContractBuilder(PipelineStep):
         raw = context.raw_signal
         strategy_code = context.strategy_selection.strategy_code
         lot_size = float(context.strategy_selection.config.get("lot_size", self.default_lot_size))
+        technical_summary = self._build_technical_summary(context)
 
         contract = SignalContract(
             symbol=context.symbol,
@@ -59,6 +99,8 @@ class SignalContractBuilder(PipelineStep):
                 "entry_type": "MARKET",
                 "reason": context.strategy_selection.reason,
                 "features": raw.features,
+                "technical_summary": technical_summary,
+                "setup_signature": technical_summary.get("setup_signature"),
             },
         )
         context.signal_contract = contract
@@ -98,6 +140,8 @@ class SignalContractBuilder(PipelineStep):
                 "reason": context.strategy_selection.reason,
                 "entry_type": "MARKET",
                 "metadata": raw.metadata,
+                "technical_summary": technical_summary,
+                "setup_signature": technical_summary.get("setup_signature"),
             },
         )
         self.signal_repository.session.commit()

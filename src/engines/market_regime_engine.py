@@ -35,6 +35,10 @@ class MarketRegimeEngine(PipelineStep):
         choppy_threshold: float = 0.3,
         high_vol_threshold: float = 0.003,
         low_vol_threshold: float = 0.001,
+        confirmation_timeframes: list[str] | None = None,
+        enable_multi_timeframe: bool = True,
+        primary_timeframe_weight: float = 0.60,
+        fusion_min_margin: float = 0.05,
     ) -> None:
         self.regime_repository = regime_repository
         self.ema_fast_period = ema_fast_period
@@ -44,6 +48,10 @@ class MarketRegimeEngine(PipelineStep):
         self.choppy_threshold = choppy_threshold
         self.high_vol_threshold = high_vol_threshold
         self.low_vol_threshold = low_vol_threshold
+        self.confirmation_timeframes = confirmation_timeframes or ["M15", "M30", "H1", "H4"]
+        self.enable_multi_timeframe = enable_multi_timeframe
+        self.primary_timeframe_weight = max(0.0, min(1.0, primary_timeframe_weight))
+        self.fusion_min_margin = max(0.0, fusion_min_margin)
 
     @staticmethod
     def _to_dataframe(frame_like: Any) -> pd.DataFrame:
@@ -60,16 +68,15 @@ class MarketRegimeEngine(PipelineStep):
             return pd.DataFrame(rows)
         return pd.DataFrame(frame_like)
 
-    def run(self, context: TradingContext) -> TradingContext:
-        ingestion = context.ingestion_result or {}
-        rates_map = ingestion.get("rates_by_timeframe", {})
-        raw = rates_map.get(context.timeframe)
-        df = self._to_dataframe(raw)
+    @staticmethod
+    def _regime_reason(regime: MarketRegimeType) -> str | None:
+        if regime == MarketRegimeType.CHOPPY:
+            return CHOPPY_MARKET_NO_TRADE
+        if regime == MarketRegimeType.LOW_VOLATILITY:
+            return LOW_VOLATILITY_NO_TRADE
+        return None
 
-        if df.empty or len(df) < max(self.ema_slow_period, self.atr_period) + 2:
-            context.reject("REGIME_DATA_INSUFFICIENT", {"message": "Not enough candles for regime calculation"})
-            return context
-
+    def _evaluate_regime_from_dataframe(self, df: pd.DataFrame) -> RegimeResult:
         close = pd.to_numeric(df["close"], errors="coerce")
         open_price = pd.to_numeric(df["open"], errors="coerce") if "open" in df.columns else close.shift(1).fillna(close)
         high = pd.to_numeric(df["high"], errors="coerce")
@@ -78,8 +85,8 @@ class MarketRegimeEngine(PipelineStep):
         ema_fast = close.ewm(span=self.ema_fast_period, adjust=False).mean()
         ema_slow = close.ewm(span=self.ema_slow_period, adjust=False).mean()
 
-        prev_close = close.shift(1)
-        tr = pd.concat([(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+        prev_close_series = close.shift(1)
+        tr = pd.concat([(high - low).abs(), (high - prev_close_series).abs(), (low - prev_close_series).abs()], axis=1).max(axis=1)
         atr = tr.rolling(self.atr_period).mean()
 
         ema_fast_val = float(ema_fast.iloc[-1])
@@ -147,15 +154,8 @@ class MarketRegimeEngine(PipelineStep):
             regime = MarketRegimeType.RANGING
 
         confidence = min(0.99, max(0.3, (trend_strength * 0.2) + (volatility_score * 10)))
-        if regime == MarketRegimeType.CHOPPY:
-            is_tradeable = False
-            regime_reason = CHOPPY_MARKET_NO_TRADE
-        elif regime == MarketRegimeType.LOW_VOLATILITY:
-            is_tradeable = False
-            regime_reason = LOW_VOLATILITY_NO_TRADE
-        else:
-            is_tradeable = True
-            regime_reason = None
+        regime_reason = self._regime_reason(regime)
+        is_tradeable = regime_reason is None
 
         features = {
             "ema_fast": ema_fast_val,
@@ -188,8 +188,7 @@ class MarketRegimeEngine(PipelineStep):
             "range_width": range_width,
             "range_lookback_bars": range_lookback,
         }
-
-        context.regime_result = RegimeResult(
+        return RegimeResult(
             regime=regime,
             confidence=confidence,
             is_tradeable=is_tradeable,
@@ -197,17 +196,240 @@ class MarketRegimeEngine(PipelineStep):
             features=features,
         )
 
+    def _fuse_regimes(
+        self,
+        *,
+        primary_timeframe: str,
+        primary_result: RegimeResult,
+        confirmation_results: dict[str, RegimeResult],
+    ) -> RegimeResult:
+        merged_features = dict(primary_result.features)
+        if not self.enable_multi_timeframe or not confirmation_results:
+            merged_features["primary_timeframe"] = primary_timeframe
+            merged_features["fused_regime"] = primary_result.regime.value
+            merged_features["mtf_confirmation"] = {}
+            merged_features["mtf_policy"] = self._build_mtf_policy(
+                primary_timeframe=primary_timeframe,
+                primary_result=primary_result,
+                fused_regime=primary_result.regime,
+                confirmation_results={},
+            )
+            return RegimeResult(
+                regime=primary_result.regime,
+                confidence=primary_result.confidence,
+                is_tradeable=primary_result.is_tradeable,
+                reason=primary_result.reason,
+                features=merged_features,
+            )
+
+        vote_scores: dict[MarketRegimeType, float] = {regime: 0.0 for regime in MarketRegimeType}
+        primary_weight = self.primary_timeframe_weight
+        secondary_weight = (1.0 - primary_weight) / max(len(confirmation_results), 1)
+
+        vote_scores[primary_result.regime] += primary_weight * float(primary_result.confidence)
+        confirmation_payload: dict[str, Any] = {}
+        for timeframe, result in confirmation_results.items():
+            vote_scores[result.regime] += secondary_weight * float(result.confidence)
+            confirmation_payload[timeframe] = {
+                "regime": result.regime.value,
+                "confidence": result.confidence,
+                "is_tradeable": result.is_tradeable,
+                "reason": result.reason,
+            }
+
+        ranked_votes = sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)
+        winner_regime, winner_score = ranked_votes[0]
+        second_score = ranked_votes[1][1] if len(ranked_votes) > 1 else 0.0
+
+        if (winner_score - second_score) < self.fusion_min_margin:
+            winner_regime = primary_result.regime
+
+        if primary_result.reason is not None:
+            fused_regime = primary_result.regime
+            fused_reason = primary_result.reason
+            fused_tradeable = False
+        else:
+            fused_regime = winner_regime
+            fused_reason = self._regime_reason(fused_regime)
+            fused_tradeable = fused_reason is None
+
+        same_as_winner = 1
+        same_as_winner += sum(1 for result in confirmation_results.values() if result.regime == fused_regime)
+        total_frames = 1 + len(confirmation_results)
+        consensus_ratio = same_as_winner / max(total_frames, 1)
+
+        merged_features.update(
+            {
+                "primary_timeframe": primary_timeframe,
+                "primary_regime": primary_result.regime.value,
+                "primary_confidence": primary_result.confidence,
+                "fused_regime": fused_regime.value,
+                "mtf_confirmation": confirmation_payload,
+                "mtf_vote_scores": {regime.value: score for regime, score in vote_scores.items() if score > 0.0},
+                "mtf_consensus_ratio": consensus_ratio,
+                "mtf_alignment_with_primary": fused_regime == primary_result.regime,
+            }
+        )
+
+        merged_features["mtf_policy"] = self._build_mtf_policy(
+            primary_timeframe=primary_timeframe,
+            primary_result=primary_result,
+            fused_regime=fused_regime,
+            confirmation_results=confirmation_results,
+        )
+
+        fused_confidence = min(0.99, max(primary_result.confidence, winner_score))
+        return RegimeResult(
+            regime=fused_regime,
+            confidence=fused_confidence,
+            is_tradeable=fused_tradeable,
+            reason=fused_reason,
+            features=merged_features,
+        )
+
+    @staticmethod
+    def _regime_to_direction_bias(regime: MarketRegimeType) -> str:
+        if regime == MarketRegimeType.TRENDING_BULLISH:
+            return "BUY"
+        if regime == MarketRegimeType.TRENDING_BEARISH:
+            return "SELL"
+        return "BOTH"
+
+    @staticmethod
+    def _extract_layer_regime(layer_timeframes: list[str], confirmation_results: dict[str, RegimeResult]) -> MarketRegimeType | None:
+        for timeframe in layer_timeframes:
+            result = confirmation_results.get(timeframe)
+            if result is not None:
+                return result.regime
+        return None
+
+    def _build_mtf_policy(
+        self,
+        *,
+        primary_timeframe: str,
+        primary_result: RegimeResult,
+        fused_regime: MarketRegimeType,
+        confirmation_results: dict[str, RegimeResult],
+    ) -> dict[str, Any]:
+        macro_regime = self._extract_layer_regime(["H4", "H1"], confirmation_results)
+        meso_regime = self._extract_layer_regime(["M30", "M15"], confirmation_results)
+        trigger_regime = primary_result.regime
+
+        macro_bias = self._regime_to_direction_bias(macro_regime) if macro_regime is not None else self._regime_to_direction_bias(fused_regime)
+        allowed_directions = ["BUY", "SELL"]
+        preferred_tokens: list[str] = []
+
+        if macro_bias == "BUY":
+            allowed_directions = ["BUY"]
+            preferred_tokens = ["EMA_ATR_TREND", "TREND", "VOLATILITY_BREAKOUT"]
+        elif macro_bias == "SELL":
+            allowed_directions = ["SELL"]
+            preferred_tokens = ["EMA_ATR_TREND", "TREND", "VOLATILITY_BREAKOUT"]
+        elif fused_regime == MarketRegimeType.RANGING:
+            preferred_tokens = ["RANGE_REVERSION", "REVERSION"]
+        elif fused_regime == MarketRegimeType.HIGH_VOLATILITY:
+            preferred_tokens = ["VOLATILITY_BREAKOUT", "LIQUIDITY_SWEEP_REVERSAL", "BREAKOUT", "SWEEP"]
+
+        block_trade = False
+        block_reason = None
+        setup_ready = True
+        setup_reason = "LAYER_POLICY_OK"
+
+        if trigger_regime in (MarketRegimeType.CHOPPY, MarketRegimeType.LOW_VOLATILITY):
+            block_trade = True
+            block_reason = trigger_regime.value
+            setup_ready = False
+            setup_reason = "TRIGGER_NOT_TRADEABLE"
+        elif meso_regime in (MarketRegimeType.CHOPPY, MarketRegimeType.LOW_VOLATILITY):
+            setup_ready = False
+            setup_reason = "MESO_LAYER_NOT_READY"
+
+        return {
+            "enabled": True,
+            "primary_timeframe": primary_timeframe,
+            "macro_layer": {
+                "timeframes": ["H4", "H1"],
+                "regime": macro_regime.value if macro_regime is not None else None,
+                "bias": macro_bias,
+            },
+            "meso_layer": {
+                "timeframes": ["M30", "M15"],
+                "regime": meso_regime.value if meso_regime is not None else None,
+                "setup_ready": setup_ready,
+                "setup_reason": setup_reason,
+            },
+            "trigger_layer": {
+                "timeframe": primary_timeframe,
+                "regime": trigger_regime.value,
+            },
+            "fused_regime": fused_regime.value,
+            "allowed_directions": allowed_directions,
+            "preferred_strategy_tokens": preferred_tokens,
+            "block_trade": block_trade,
+            "block_reason": block_reason,
+        }
+
+    def run(self, context: TradingContext) -> TradingContext:
+        ingestion = context.ingestion_result or {}
+        rates_map = ingestion.get("rates_by_timeframe", {})
+        raw = rates_map.get(context.timeframe)
+        df = self._to_dataframe(raw)
+
+        if df.empty or len(df) < max(self.ema_slow_period, self.atr_period) + 2:
+            context.reject("REGIME_DATA_INSUFFICIENT", {"message": "Not enough candles for regime calculation"})
+            return context
+
+        primary_result = self._evaluate_regime_from_dataframe(df)
+
+        confirmation_results: dict[str, RegimeResult] = {}
+        if self.enable_multi_timeframe:
+            min_rows = max(self.ema_slow_period, self.atr_period) + 2
+            for timeframe in self.confirmation_timeframes:
+                if timeframe == context.timeframe:
+                    continue
+                raw_tf = rates_map.get(timeframe)
+                if raw_tf is None:
+                    continue
+                tf_df = self._to_dataframe(raw_tf)
+                if tf_df.empty or len(tf_df) < min_rows:
+                    continue
+                confirmation_results[timeframe] = self._evaluate_regime_from_dataframe(tf_df)
+
+        context.regime_result = self._fuse_regimes(
+            primary_timeframe=context.timeframe,
+            primary_result=primary_result,
+            confirmation_results=confirmation_results,
+        )
+
         symbol_id = ingestion.get("symbol_id")
-        timeframe_id = (ingestion.get("timeframe_ids") or {}).get(context.timeframe)
+        timeframe_ids = ingestion.get("timeframe_ids") or {}
+        timeframe_id = timeframe_ids.get(context.timeframe)
         if symbol_id and timeframe_id:
             self.regime_repository.create_market_regime(
                 symbol_id=symbol_id,
                 timeframe_id=timeframe_id,
-                regime=regime.value,
-                confidence=confidence,
+                regime=context.regime_result.regime.value,
+                confidence=context.regime_result.confidence,
                 detected_at=context.candle_time,
-                features=features,
+                features=context.regime_result.features,
             )
+            for timeframe, result in confirmation_results.items():
+                tf_id = timeframe_ids.get(timeframe)
+                if not tf_id:
+                    continue
+                self.regime_repository.create_market_regime(
+                    symbol_id=symbol_id,
+                    timeframe_id=tf_id,
+                    regime=result.regime.value,
+                    confidence=result.confidence,
+                    detected_at=context.candle_time,
+                    features={
+                        **result.features,
+                        "source": "mtf_confirmation",
+                        "primary_timeframe": context.timeframe,
+                        "fused_regime": context.regime_result.regime.value,
+                    },
+                )
             self.regime_repository.session.commit()
 
         return context

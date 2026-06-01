@@ -45,7 +45,7 @@ class SignalValidator(PipelineStep):
         if regime == MarketRegimeType.RANGING:
             return "REVERSION" in code or "RANGE" in code
         if regime == MarketRegimeType.HIGH_VOLATILITY:
-            return "BREAKOUT" in code
+            return ("BREAKOUT" in code) or ("LIQUIDITY" in code) or ("SWEEP" in code)
         if regime == MarketRegimeType.CHOPPY:
             return False
         return True
@@ -57,6 +57,7 @@ class SignalValidator(PipelineStep):
 
         contract = context.signal_contract
         issues: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
 
         if contract.direction not in (SignalDirection.BUY, SignalDirection.SELL):
             issues.append({"check": "SIDE_VALID", "message": f"Invalid side={contract.direction}"})
@@ -90,6 +91,19 @@ class SignalValidator(PipelineStep):
                     }
                 )
 
+            mtf_policy = ((context.regime_result.features or {}).get("mtf_policy") or {})
+            if isinstance(mtf_policy, dict) and bool(mtf_policy.get("enabled", False)):
+                allowed_directions = [str(direction).upper() for direction in (mtf_policy.get("allowed_directions") or [])]
+                side = contract.direction.value.upper()
+                if allowed_directions and side not in allowed_directions:
+                    issues.append(
+                        {
+                            "check": "MTF_POLICY_DIRECTION",
+                            "message": f"direction={side} not allowed by mtf_policy={allowed_directions}",
+                            "policy": mtf_policy,
+                        }
+                    )
+
         spread = context.market_snapshot.spread if context.market_snapshot else None
         if spread is not None and float(spread) > float(self.settings.max_spread):
             issues.append({"check": "SPREAD_LIMIT", "message": f"spread={spread} > max_spread={self.settings.max_spread}"})
@@ -104,6 +118,30 @@ class SignalValidator(PipelineStep):
                     }
                 )
 
+        technical_summary = contract.metadata.get("technical_summary") if isinstance(contract.metadata, dict) else {}
+        if isinstance(technical_summary, dict):
+            technical_bias = str(technical_summary.get("technical_bias", "neutral")).lower()
+            buy_score = float(technical_summary.get("buy_score", 0.0) or 0.0)
+            sell_score = float(technical_summary.get("sell_score", 0.0) or 0.0)
+            direction = contract.direction.value.lower()
+
+            conflict = (direction == "buy" and technical_bias == "sell") or (direction == "sell" and technical_bias == "buy")
+            if conflict:
+                severity = abs(buy_score - sell_score)
+                warning_item = {
+                    "check": "TECHNICAL_CONFLICT",
+                    "message": f"signal={direction} conflicts technical_bias={technical_bias}",
+                    "severity": severity,
+                    "setup_signature": technical_summary.get("setup_signature"),
+                }
+                warnings.append(warning_item)
+
+                policy = (context.strategy_selection.config.get("technical_validation") if context.strategy_selection else None) or {}
+                hard_reject_enabled = bool(policy.get("hard_reject_on_severe_conflict", False))
+                severe_threshold = float(policy.get("severe_conflict_threshold", 0.30))
+                if hard_reject_enabled and severity >= severe_threshold:
+                    issues.append({**warning_item, "check": "TECHNICAL_CONFLICT_SEVERE"})
+
         validated_at = datetime.now(timezone.utc)
         if issues:
             self.signal_repository.create_signal_validation(
@@ -112,7 +150,7 @@ class SignalValidator(PipelineStep):
                 status="REJECTED",
                 validated_at=validated_at,
                 rejection_reason="SIGNAL_VALIDATION_FAILED",
-                details={"issues": issues},
+                details={"issues": issues, "warnings": warnings},
             )
             self.signal_repository.session.commit()
 
@@ -120,7 +158,7 @@ class SignalValidator(PipelineStep):
                 status=ValidationStatus.REJECTED,
                 reason="SIGNAL_VALIDATION_FAILED",
                 validator_name="SignalValidator",
-                details={"issues": issues},
+                details={"issues": issues, "warnings": warnings},
             )
             context.reject("SIGNAL_VALIDATION_FAILED", {"issues": issues})
             return context
@@ -131,7 +169,7 @@ class SignalValidator(PipelineStep):
             status="PASSED",
             validated_at=validated_at,
             rejection_reason=None,
-            details={"message": "Signal validation passed"},
+            details={"message": "Signal validation passed", "warnings": warnings},
         )
         self.signal_repository.session.commit()
 
@@ -139,6 +177,6 @@ class SignalValidator(PipelineStep):
             status=ValidationStatus.PASSED,
             reason=None,
             validator_name="SignalValidator",
-            details={"issues": []},
+            details={"issues": [], "warnings": warnings},
         )
         return context

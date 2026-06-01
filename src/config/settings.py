@@ -70,6 +70,7 @@ class AppSettings(BaseSettings):
     feedback_high_drawdown: float = Field(default=500.0, alias="FEEDBACK_HIGH_DRAWDOWN")
     trading_symbol: str = Field(default="XAUUSD", alias="TRADING_SYMBOL")
     trading_timeframe: str = Field(default="M5", alias="TRADING_TIMEFRAME")
+    context_timeframes_csv: str = Field(default="M15,M30,H1,H4", alias="CONTEXT_TIMEFRAMES")
     listener_interval_seconds: float = Field(default=1.0, alias="LISTENER_INTERVAL_SECONDS")
     position_sync_interval_seconds: float = Field(default=5.0, alias="POSITION_SYNC_INTERVAL_SECONDS")
     heartbeat_interval_seconds: float = Field(default=10.0, alias="HEARTBEAT_INTERVAL_SECONDS")
@@ -81,6 +82,13 @@ class AppSettings(BaseSettings):
     log_compression: str = Field(default="zip", alias="LOG_COMPRESSION")
 
     timezone: str = Field(default="UTC", alias="TIMEZONE")
+
+    @property
+    def context_timeframes(self) -> list[str]:
+        """Parsed context timeframes from comma-separated env value."""
+
+        raw_items = [item.strip().upper() for item in self.context_timeframes_csv.split(",")]
+        return [item for item in raw_items if item]
 
 
 @lru_cache(maxsize=1)

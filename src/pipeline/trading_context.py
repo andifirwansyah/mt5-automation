@@ -21,6 +21,7 @@ from src.domain.models import (
     StrategySelectionResult,
     ValidationResult,
 )
+from src.trading.technical_analysis.models import TechnicalAnalysisResult
 
 
 @dataclass(slots=True)
@@ -36,6 +37,7 @@ class TradingContext:
     data_quality_result: ValidationResult | None = None
     market_event_result: ValidationResult | None = None
     regime_result: RegimeResult | None = None
+    technical_analysis: TechnicalAnalysisResult | None = None
     strategy_selection: StrategySelectionResult | None = None
     raw_signal: RawSignal | None = None
     signal_contract: SignalContract | None = None

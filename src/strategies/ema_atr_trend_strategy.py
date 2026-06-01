@@ -10,6 +10,8 @@ from src.domain.models.market_snapshot import MarketSnapshot
 from src.domain.models.regime_result import RegimeResult
 from src.domain.models.signal import RawSignal
 from src.strategies.base_strategy import BaseStrategy
+from src.strategies.pattern_evidence_utils import count_fvg, has_pattern_status, is_pattern_enabled
+from src.trading.technical_analysis.models import TechnicalAnalysisResult
 
 
 class EmaAtrTrendStrategy(BaseStrategy):
@@ -22,6 +24,7 @@ class EmaAtrTrendStrategy(BaseStrategy):
         market_snapshot: MarketSnapshot,
         regime: RegimeResult,
         config: dict[str, Any],
+        technical_analysis: TechnicalAnalysisResult | None = None,
     ) -> RawSignal | None:
         if regime.regime not in (
             MarketRegimeType.TRENDING_BULLISH,
@@ -116,6 +119,32 @@ class EmaAtrTrendStrategy(BaseStrategy):
                 0.45 + (trend_strength * 0.15) + (body_atr_ratio * 0.2),
             ),
         )
+        pattern_notes: list[str] = []
+
+        if is_pattern_enabled(config):
+            pe = config.get("pattern_evidence") or {}
+            if bool(pe.get("fvg_retest_enabled", True)):
+                fvg_type = "bullish_fvg" if direction == SignalDirection.BUY else "bearish_fvg"
+                fvg_count = count_fvg(technical_analysis, fvg_type, {"open", "partial"})
+                if fvg_count > 0:
+                    confidence += float(pe.get("fvg_bonus", 0.12))
+                    pattern_notes.append(f"{fvg_type}_retest_support")
+
+            penalty = float(pe.get("active_reversal_pattern_penalty", -0.15))
+            if direction == SignalDirection.BUY:
+                if has_pattern_status(technical_analysis, "DOUBLE_TOP", {"waiting_neckline_break", "weak_neckline_break", "neckline_broken"}):
+                    if bool(pe.get("block_buy_on_active_double_top", False)):
+                        return None
+                    confidence += penalty
+                    pattern_notes.append("active_double_top_penalty")
+            else:
+                if has_pattern_status(technical_analysis, "DOUBLE_BOTTOM", {"waiting_neckline_break", "weak_neckline_break", "neckline_broken"}):
+                    if bool(pe.get("block_sell_on_active_double_bottom", False)):
+                        return None
+                    confidence += penalty
+                    pattern_notes.append("active_double_bottom_penalty")
+
+        confidence = min(0.99, max(0.35, confidence))
 
         return RawSignal(
             direction=direction,
@@ -135,6 +164,7 @@ class EmaAtrTrendStrategy(BaseStrategy):
                 "allow_momentum_continuation": allow_momentum_continuation,
                 "momentum_min_body_atr": momentum_min_body_atr,
                 "setup_type": setup_type,
+                "pattern_evidence_notes": pattern_notes,
             },
             metadata={"strategy_code": self.strategy_code},
         )

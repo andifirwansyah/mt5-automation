@@ -24,6 +24,8 @@ from src.domain.models.market_snapshot import MarketSnapshot
 from src.domain.models.regime_result import RegimeResult
 from src.domain.models.signal import RawSignal
 from src.strategies.base_strategy import BaseStrategy
+from src.strategies.pattern_evidence_utils import count_fvg, has_pattern_status, is_pattern_enabled
+from src.trading.technical_analysis.models import TechnicalAnalysisResult
 
 # Configuration constants untuk production stability
 DEFAULT_CONFIG = {
@@ -56,7 +58,7 @@ DEFAULT_CONFIG = {
     "max_vol_atr_range": 3.0,  # Max ATR untuk volume analysis
     
     # === CONFIDENCE THRESHOLDS ===
-    "min_signal_confidence": 0.65,  # Minimum confidence untuk signal generation
+    "min_signal_confidence": 0.58,  # Minimum confidence untuk signal generation
     "sweep_confidence_weight": 0.35,  # Weight untuk sweep quality score
     "reversal_confidence_weight": 0.40,  # Weight untuk reversal pattern
     "volume_confidence_weight": 0.25,  # Weight untuk volume confirmation
@@ -103,6 +105,7 @@ class LiquiditySweepReversalStrategy(BaseStrategy):
         market_snapshot: MarketSnapshot,
         regime: RegimeResult,
         config: dict[str, Any],
+        technical_analysis: TechnicalAnalysisResult | None = None,
     ) -> RawSignal | None:
         """
         Generate trading signal berdasarkan liquidity sweep reversal.
@@ -179,6 +182,12 @@ class LiquiditySweepReversalStrategy(BaseStrategy):
             entry=entry_data,
             config=config_final,
         )
+        signal_confidence, pattern_notes = self._apply_pattern_evidence_adjustment(
+            signal_confidence=signal_confidence,
+            sweep=sweep_data,
+            technical_analysis=technical_analysis,
+            config=config_final,
+        )
         if signal_confidence < config_final["min_signal_confidence"]:
             return None
 
@@ -193,6 +202,7 @@ class LiquiditySweepReversalStrategy(BaseStrategy):
             reversal=reversal_data,
             entry=entry_data,
             confidence=signal_confidence,
+            pattern_notes=pattern_notes,
         )
 
     # =========================================================================
@@ -801,6 +811,7 @@ class LiquiditySweepReversalStrategy(BaseStrategy):
         reversal: dict[str, Any],
         entry: dict[str, Any],
         confidence: float,
+        pattern_notes: list[str] | None = None,
     ) -> RawSignal:
         """Create RawSignal object dengan semua data."""
         direction = (
@@ -826,6 +837,7 @@ class LiquiditySweepReversalStrategy(BaseStrategy):
                 "reversal_confidence": reversal["confidence"],
                 "reversal_body_ratio": reversal["body_ratio"],
                 "entry_mode": entry["entry_mode"],
+                "pattern_evidence_notes": pattern_notes or [],
             },
             metadata={
                 "strategy_code": self.strategy_code,
@@ -855,3 +867,53 @@ class LiquiditySweepReversalStrategy(BaseStrategy):
             return range_val
 
         return None
+
+    def _apply_pattern_evidence_adjustment(
+        self,
+        signal_confidence: float,
+        sweep: dict[str, Any],
+        technical_analysis: TechnicalAnalysisResult | None,
+        config: dict[str, Any],
+    ) -> tuple[float, list[str]]:
+        if not is_pattern_enabled(config):
+            return signal_confidence, []
+
+        pe = config.get("pattern_evidence") or {}
+        notes: list[str] = []
+        support_count = 0
+        adjusted = signal_confidence
+
+        # direction mapping: signal BUY means low sweep reversal; signal SELL means high sweep reversal
+        generated_direction = "BUY" if sweep.get("direction") == SignalDirection.SELL else "SELL"
+
+        if generated_direction == "SELL" and bool(pe.get("allow_double_top_after_high_sweep", True)):
+            allowed = {"detected", "waiting_neckline_break", "weak_neckline_break", "neckline_broken"}
+            if bool(pe.get("require_neckline_break", False)):
+                allowed = {"neckline_broken"}
+            if has_pattern_status(technical_analysis, "DOUBLE_TOP", allowed):
+                support_count += 1
+                notes.append("double_top_after_sweep")
+            if has_pattern_status(technical_analysis, "DOUBLE_TOP", {"neckline_broken"}):
+                adjusted += float(pe.get("neckline_break_bonus", 0.12))
+
+        if generated_direction == "BUY" and bool(pe.get("allow_double_bottom_after_low_sweep", True)):
+            allowed = {"detected", "waiting_neckline_break", "weak_neckline_break", "neckline_broken"}
+            if bool(pe.get("require_neckline_break", False)):
+                allowed = {"neckline_broken"}
+            if has_pattern_status(technical_analysis, "DOUBLE_BOTTOM", allowed):
+                support_count += 1
+                notes.append("double_bottom_after_sweep")
+            if has_pattern_status(technical_analysis, "DOUBLE_BOTTOM", {"neckline_broken"}):
+                adjusted += float(pe.get("neckline_break_bonus", 0.12))
+
+        fvg_type = "bullish_fvg" if generated_direction == "BUY" else "bearish_fvg"
+        fvg_count = count_fvg(technical_analysis, fvg_type, {"open", "partial"})
+        if fvg_count > 0:
+            support_count += 1
+            adjusted += float(pe.get("fvg_after_sweep_bonus", 0.10))
+            notes.append(f"{fvg_type}_after_sweep")
+
+        if bool(pe.get("use_as_hard_requirement", False)) and support_count == 0:
+            return 0.0, notes
+
+        return min(0.99, max(0.35, adjusted)), notes

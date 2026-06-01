@@ -52,6 +52,7 @@ class StrategyEngine(PipelineStep):
             market_snapshot=context.market_snapshot,
             regime=context.regime_result,
             config=context.strategy_selection.config,
+            technical_analysis=context.technical_analysis,
         )
 
         if signal is None:

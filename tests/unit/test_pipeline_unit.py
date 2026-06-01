@@ -27,6 +27,8 @@ from src.pipeline.pipeline_step import PipelineStep
 from src.pipeline.rejection_reason import (
     CHOPPY_MARKET_NO_TRADE,
     LOW_VOLATILITY_NO_TRADE,
+    MTF_POLICY_BLOCKED,
+    MTF_POLICY_NO_SETUP,
 )
 from src.pipeline.trading_context import TradingContext
 
@@ -224,6 +226,7 @@ def test_market_regime_engine_low_volatility_sets_no_trade_reason() -> None:
         regime_repository=RegimeRepo(),
         high_vol_threshold=1.0,
         low_vol_threshold=0.01,
+        trend_threshold=10.0,
     )
     result = engine.run(context)
     assert result.regime_result is not None
@@ -579,6 +582,116 @@ def test_signal_validator_rejects_duplicate_signal() -> None:
     result = engine.run(context)
     assert result.rejected is True
     assert result.rejection_reason == "SIGNAL_VALIDATION_FAILED"
+
+
+def test_strategy_selector_rejects_when_mtf_policy_blocked() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.called = 0
+
+        def get_active_strategies(self):
+            self.called += 1
+            return []
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.TRENDING_BULLISH,
+        confidence=0.8,
+        is_tradeable=True,
+        features={
+            "mtf_policy": {
+                "enabled": True,
+                "block_trade": True,
+                "block_reason": "TRIGGER_NOT_TRADEABLE",
+            }
+        },
+    )
+    repo = StrategyRepo()
+    out = StrategySelector(strategy_repository=repo).run(context)
+    assert out.rejected is True
+    assert out.rejection_reason == MTF_POLICY_BLOCKED
+    assert repo.called == 0
+
+
+def test_strategy_selector_rejects_when_meso_setup_not_ready() -> None:
+    class StrategyRepo:
+        def __init__(self) -> None:
+            self.called = 0
+
+        def get_active_strategies(self):
+            self.called += 1
+            return []
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": str(uuid.uuid4()), "timeframe_ids": {"M5": str(uuid.uuid4())}}
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.TRENDING_BULLISH,
+        confidence=0.8,
+        is_tradeable=True,
+        features={
+            "mtf_policy": {
+                "enabled": True,
+                "block_trade": False,
+                "meso_layer": {"setup_ready": False, "setup_reason": "MESO_LAYER_NOT_READY"},
+            }
+        },
+    )
+    repo = StrategyRepo()
+    out = StrategySelector(strategy_repository=repo).run(context)
+    assert out.rejected is True
+    assert out.rejection_reason == MTF_POLICY_NO_SETUP
+    assert repo.called == 0
+
+
+def test_signal_validator_rejects_direction_conflict_with_mtf_policy() -> None:
+    class SignalRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+
+        @staticmethod
+        def count_signals_by_candle(**_kwargs):
+            return 0
+
+        @staticmethod
+        def create_signal_validation(**_kwargs):
+            return None
+
+    class PositionRepo:
+        @staticmethod
+        def get_open_positions(**_kwargs):
+            return []
+
+    context = _context()
+    context.ingestion_result = {"symbol_id": uuid.uuid4(), "timeframe_ids": {"M5": uuid.uuid4()}}
+    context.signal_contract = SignalContract(
+        symbol="XAUUSD",
+        timeframe="M5",
+        direction=SignalDirection.SELL,
+        entry_price=2300.0,
+        stop_loss=2302.0,
+        take_profit=2296.0,
+        lot_size=0.1,
+        confidence=0.7,
+        generated_at=context.candle_time,
+        strategy_code="EMA_ATR_TREND",
+        metadata={"signal_id": str(uuid.uuid4())},
+    )
+    context.regime_result = RegimeResult(
+        regime=MarketRegimeType.TRENDING_BULLISH,
+        confidence=0.8,
+        is_tradeable=True,
+        features={
+            "mtf_policy": {
+                "enabled": True,
+                "allowed_directions": ["BUY"],
+            }
+        },
+    )
+
+    out = SignalValidator(signal_repository=SignalRepo(), position_repository=PositionRepo()).run(context)
+    assert out.rejected is True
+    assert out.rejection_reason == "SIGNAL_VALIDATION_FAILED"
 
 
 def test_risk_engine_requires_sl_and_tp() -> None:

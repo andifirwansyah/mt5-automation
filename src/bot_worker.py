@@ -68,6 +68,8 @@ from src.services import (
     RuntimeStateService,
     TradeLifecycleService,
 )
+from src.trading.technical_analysis.engine import TechnicalAnalysisEngine
+from src.trading.technical_analysis.config import TechnicalAnalysisConfig
 
 
 def main() -> None:
@@ -195,11 +197,20 @@ def main() -> None:
             market_data=market_data,
             account_client=account_client,
             position_client=position_client,
+            context_timeframes=settings.context_timeframes,
         )
         ingestion_engine = MarketDataIngestionEngine(market_repo, account_repo, candle_service, account_snapshot_service)
         data_quality = DataQualityGuard(market_repo, candle_service, max_spread=settings.max_spread)
         market_event = MarketEventFilter(market_repo)
-        regime_engine = MarketRegimeEngine(regime_repo)
+        regime_engine = MarketRegimeEngine(
+            regime_repo,
+            confirmation_timeframes=settings.context_timeframes,
+        )
+        technical_analysis_engine = TechnicalAnalysisEngine(
+            config=TechnicalAnalysisConfig(
+                confirmation_timeframes=settings.context_timeframes,
+            )
+        )
         strategy_selector = StrategySelector(strategy_repo)
         strategy_engine = StrategyEngine()
         signal_builder = SignalContractBuilder(signal_repo, strategy_repo)
@@ -222,6 +233,7 @@ def main() -> None:
                 "DataQualityGuard": data_quality,
                 "MarketEventFilter": market_event,
                 "MarketRegimeEngine": regime_engine,
+                "TechnicalAnalysisEngine": technical_analysis_engine,
                 "StrategySelector": strategy_selector,
                 "StrategyEngine": strategy_engine,
                 "SignalContractBuilder": signal_builder,

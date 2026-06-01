@@ -15,6 +15,7 @@ PIPELINE_STEP_ORDER: tuple[str, ...] = (
     "DataQualityGuard",
     "MarketEventFilter",
     "MarketRegimeEngine",
+    "TechnicalAnalysisEngine",
     "StrategySelector",
     "StrategyEngine",
     "SignalContractBuilder",

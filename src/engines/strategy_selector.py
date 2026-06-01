@@ -10,6 +10,8 @@ from src.domain.enums import MarketRegimeType
 from src.domain.models.strategy_selection import StrategySelectionResult
 from src.pipeline.pipeline_step import PipelineStep
 from src.pipeline.rejection_reason import (
+    MTF_POLICY_BLOCKED,
+    MTF_POLICY_NO_SETUP,
     NO_ACTIVE_STRATEGIES,
     NO_STRATEGY_MATCHED_REGIME,
     NO_STRATEGY_PASSED_CONFIG,
@@ -77,6 +79,20 @@ class StrategySelector(PipelineStep):
         return []
 
     @staticmethod
+    def _hint_tokens(context: TradingContext) -> list[str]:
+        technical = context.technical_analysis
+        if technical is None:
+            return []
+        return [str(h).upper() for h in (technical.strategy_hints or []) if str(h).strip()]
+
+    @staticmethod
+    def _hint_bonus(strategy_code: str, hint_tokens: list[str]) -> float:
+        code = strategy_code.upper()
+        if any(token == code or token in code or code in token for token in hint_tokens):
+            return 0.05
+        return 0.0
+
+    @staticmethod
     def _ranked_candidates(strategies: list, preferred_tokens: list[str]) -> list:
         ranked: list = []
         seen_ids: set[str] = set()
@@ -90,6 +106,19 @@ class StrategySelector(PipelineStep):
                     ranked.append(strategy)
                     seen_ids.add(sid)
         return ranked
+
+    @staticmethod
+    def _merge_tokens(base_tokens: list[str], policy_tokens: list[str]) -> list[str]:
+        merged = [*policy_tokens, *base_tokens]
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for token in merged:
+            token_up = str(token).upper().strip()
+            if not token_up or token_up in seen:
+                continue
+            seen.add(token_up)
+            normalized.append(token_up)
+        return normalized
 
     @staticmethod
     def _matches_scope(details: dict[str, Any], symbol_id: uuid.UUID, timeframe_id: uuid.UUID) -> bool:
@@ -206,6 +235,37 @@ class StrategySelector(PipelineStep):
             )
             return context
 
+        preferred_tokens = self._preferred_code_tokens(regime)
+        mtf_policy = ((context.regime_result.features or {}).get("mtf_policy") or {}) if context.regime_result else {}
+        if isinstance(mtf_policy, dict) and bool(mtf_policy.get("enabled", False)):
+            if bool(mtf_policy.get("block_trade", False)):
+                context.reject(
+                    MTF_POLICY_BLOCKED,
+                    {
+                        "message": "MTF policy blocked trade",
+                        "regime": regime.value,
+                        "policy": mtf_policy,
+                    },
+                )
+                return context
+
+            meso_layer = mtf_policy.get("meso_layer") if isinstance(mtf_policy.get("meso_layer"), dict) else {}
+            if meso_layer and not bool(meso_layer.get("setup_ready", True)):
+                context.reject(
+                    MTF_POLICY_NO_SETUP,
+                    {
+                        "message": "MTF meso layer not ready",
+                        "regime": regime.value,
+                        "policy": mtf_policy,
+                    },
+                )
+                return context
+
+            preferred_tokens = self._merge_tokens(
+                base_tokens=preferred_tokens,
+                policy_tokens=[str(t) for t in (mtf_policy.get("preferred_strategy_tokens") or [])],
+            )
+
         strategies = self.strategy_repository.get_active_strategies()
         if not strategies:
             context.reject(
@@ -219,7 +279,7 @@ class StrategySelector(PipelineStep):
             )
             return context
 
-        preferred_tokens = self._preferred_code_tokens(regime)
+        hint_tokens = self._hint_tokens(context)
         if not preferred_tokens:
             context.reject(
                 UNSUPPORTED_REGIME_FOR_STRATEGY,
@@ -252,6 +312,7 @@ class StrategySelector(PipelineStep):
         selected_config = {}
         rejected_candidates: list[dict[str, str]] = []
         eligible_candidates: list[tuple[Any, dict[str, Any]]] = []
+        candidate_hint_bonus: dict[str, float] = {}
         for strategy in candidates:
             configs = self.strategy_repository.get_active_strategy_configs(
                 strategy_id=strategy.id,
@@ -265,6 +326,7 @@ class StrategySelector(PipelineStep):
                 continue
 
             eligible_candidates.append((strategy, config_payload))
+            candidate_hint_bonus[str(strategy.id)] = self._hint_bonus(strategy.code, hint_tokens)
 
         if not eligible_candidates:
             context.reject(
@@ -300,12 +362,17 @@ class StrategySelector(PipelineStep):
                 )
                 continue
             score, diagnostics = perf_result
-            ranked_by_weighted_performance.append((score, strategy, config_payload, diagnostics))
+            bonus = candidate_hint_bonus.get(str(strategy.id), 0.0)
+            combined_score = float(score) + float(bonus)
+            diagnostics = {**diagnostics, "ta_hint_bonus": round(bonus, 4), "combined_score": round(combined_score, 6)}
+            ranked_by_weighted_performance.append((combined_score, strategy, config_payload, diagnostics))
             ranking_details.append(
                 {
                     "strategy_code": strategy.code,
                     "eligible_order": idx,
                     "score": diagnostics["score"],
+                    "combined_score": diagnostics["combined_score"],
+                    "ta_hint_bonus": diagnostics["ta_hint_bonus"],
                     "weighted_trades": diagnostics["weighted_trades"],
                     "records_considered": diagnostics["records_considered"],
                     "scoring": "weighted_performance",
@@ -327,17 +394,30 @@ class StrategySelector(PipelineStep):
                 "config": selected_config,
                 "selector_mode": "weighted_performance",
                 "weighted_score": selected_diag["score"],
+                "combined_score": selected_diag["combined_score"],
+                "ta_hint_bonus": selected_diag["ta_hint_bonus"],
+                "ta_hint_tokens": hint_tokens,
                 "weighted_trades": selected_diag["weighted_trades"],
                 "ranking": ranking_details,
             }
         else:
-            selected, selected_config = eligible_candidates[0]
+            selected_candidates = sorted(
+                eligible_candidates,
+                key=lambda item: (
+                    candidate_hint_bonus.get(str(item[0].id), 0.0),
+                    -next(i for i, (s, _) in enumerate(eligible_candidates) if s.id == item[0].id),
+                ),
+                reverse=True,
+            )
+            selected, selected_config = selected_candidates[0]
             selection_reason = f"Matched by regime={regime.value}"
             selection_details = {
                 "regime": regime.value,
                 "config": selected_config,
                 "selector_mode": "fallback_token_order",
                 "ranking": ranking_details,
+                "ta_hint_tokens": hint_tokens,
+                "ta_hint_bonus_selected": candidate_hint_bonus.get(str(selected.id), 0.0),
             }
 
         self.strategy_repository.create_strategy_selection(
@@ -361,6 +441,8 @@ class StrategySelector(PipelineStep):
                 "strategy_id": str(selected.id),
                 "selector_mode": selection_details["selector_mode"],
                 "ranking": ranking_details,
+                "ta_hint_tokens": hint_tokens,
+                "ta_hint_bonus_selected": selection_details.get("ta_hint_bonus_selected", candidate_hint_bonus.get(str(selected.id), 0.0)),
             },
         )
 
