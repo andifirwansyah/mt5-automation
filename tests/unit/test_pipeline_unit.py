@@ -9,6 +9,7 @@ from src.domain.enums import ExecutionDecisionStatus, MarketRegimeType, OrderExe
 from src.domain.models.broker_health import BrokerHealth
 from src.domain.models.edge_result import EdgeResult
 from src.domain.models.execution_decision import ExecutionDecision
+from src.domain.models.order_result import OrderResult
 from src.domain.models.regime_result import RegimeResult
 from src.domain.models.risk_plan import RiskPlan
 from src.domain.models.signal import SignalContract
@@ -22,6 +23,7 @@ from src.engines.risk_engine import RiskEngine
 from src.engines.signal_validator import SignalValidator
 from src.engines.market_regime_engine import MarketRegimeEngine
 from src.engines.strategy_selector import StrategySelector
+from src.infrastructure.mt5.mt5_order_executor import MT5OrderExecutor
 from src.orchestrators.trading_orchestrator import TradingOrchestrator
 from src.pipeline.pipeline_step import PipelineStep
 from src.pipeline.rejection_reason import (
@@ -963,6 +965,116 @@ def test_execution_engine_cannot_bypass_gate_without_approve_auto() -> None:
     assert result.rejected is True
     assert result.rejection_reason == "ORDER_EXECUTION_FAILED"
     assert fake_executor.send_called == 0
+
+
+def test_mt5_order_check_passed_accepts_retcode_zero_with_done_comment() -> None:
+    check_result = {"retcode": 0, "comment": "Done"}
+    assert MT5OrderExecutor.is_order_check_passed(check_result) is True
+
+
+def test_mt5_order_check_passed_rejects_non_success_code() -> None:
+    check_result = {"retcode": 10030, "comment": "Invalid filling mode"}
+    assert MT5OrderExecutor.is_order_check_passed(check_result) is False
+
+
+def test_execution_engine_accepts_order_check_retcode_zero_done_comment() -> None:
+    class ExecutionRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+
+        @staticmethod
+        def create_execution_order(**_kwargs):
+            class R:
+                id = uuid.uuid4()
+
+            return R()
+
+        @staticmethod
+        def update_execution_order_result(**_kwargs):
+            class R:
+                id = uuid.uuid4()
+
+            return R()
+
+    class SafetyRepo:
+        @staticmethod
+        def get_active_kill_switch():
+            return None
+
+    class FakeOrderExecutor:
+        @staticmethod
+        def build_market_order_request(signal: SignalContract, risk_plan: RiskPlan) -> dict:
+            return {
+                "symbol": signal.symbol,
+                "volume": risk_plan.lot_size,
+                "sl": risk_plan.stop_loss,
+                "tp": risk_plan.take_profit,
+            }
+
+        @staticmethod
+        def order_check(_request: dict) -> dict:
+            return {"retcode": 0, "comment": "Done"}
+
+        @staticmethod
+        def is_order_check_passed(check_result: dict | None) -> bool:
+            return MT5OrderExecutor.is_order_check_passed(check_result)
+
+        @staticmethod
+        def send_market_order(*_args, **_kwargs) -> OrderResult:
+            return OrderResult(
+                status=OrderExecutionStatus.FILLED,
+                dry_run=False,
+                submitted_at=datetime.now(timezone.utc),
+                order_ticket=123456,
+                request_payload={"source": "pytest"},
+                response_payload={"retcode": 10009, "comment": "Request completed"},
+            )
+
+    class _Settings:
+        dry_run = False
+        order_deviation = 20
+        account_mode = "DEMO_AUTO"
+
+    context = _context()
+    context.ingestion_result = {
+        "symbol_id": uuid.uuid4(),
+        "account_info": {"server": "Demo-Server", "name": "Demo Account", "trade_mode": 0},
+    }
+    context.signal_contract = SignalContract(
+        symbol="XAUUSD",
+        timeframe="M5",
+        direction=SignalDirection.BUY,
+        entry_price=2301.0,
+        stop_loss=2299.0,
+        take_profit=2305.0,
+        lot_size=0.1,
+        confidence=0.7,
+        generated_at=context.candle_time,
+        strategy_code="EMA_ATR_TREND",
+        metadata={"signal_id": str(uuid.uuid4())},
+    )
+    context.risk_plan = RiskPlan(
+        passed=True,
+        lot_size=0.1,
+        entry_price=2301.0,
+        stop_loss=2299.0,
+        take_profit=2305.0,
+        risk_per_trade_pct=1.0,
+        max_daily_loss_pct=5.0,
+    )
+    context.execution_decision = ExecutionDecision(status=ExecutionDecisionStatus.APPROVE_AUTO, details={})
+
+    engine = ExecutionEngine(
+        execution_repository=ExecutionRepo(),
+        safety_repository=SafetyRepo(),
+        order_executor=FakeOrderExecutor(),
+        settings=_Settings(),
+    )
+    result = engine.run(context)
+
+    assert result.rejected is False
+    assert result.order_result is not None
+    assert result.order_result.status == OrderExecutionStatus.FILLED
 
 
 def test_kill_switch_monitor_blocks_active_kill_switch() -> None:

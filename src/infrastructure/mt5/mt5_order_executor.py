@@ -33,6 +33,29 @@ class MT5OrderExecutor:
     def _now() -> datetime:
         return datetime.now(timezone.utc)
 
+    @staticmethod
+    def is_order_check_passed(check_result: dict[str, Any] | None) -> bool:
+        """Normalize MT5 order_check pass criteria across runtime environments."""
+
+        if not isinstance(check_result, dict):
+            return False
+
+        retcode_value = check_result.get("retcode")
+        try:
+            retcode = int(retcode_value)
+        except (TypeError, ValueError):
+            retcode = None
+
+        success_retcodes = {0}
+        if mt5 is not None:
+            success_retcodes.add(int(getattr(mt5, "TRADE_RETCODE_DONE", 0)))
+
+        if retcode is not None and retcode in success_retcodes:
+            return True
+
+        comment = str(check_result.get("comment", "")).strip().lower()
+        return "done" in comment
+
     def order_check(self, request: dict[str, Any]) -> dict[str, Any] | None:
         self._require_mt5()
         result = mt5.order_check(request)
@@ -120,15 +143,16 @@ class MT5OrderExecutor:
                 error_message="order_check returned None.",
             )
 
-        check_retcode = int(check_result.get("retcode", -1))
-        if check_retcode != getattr(mt5, "TRADE_RETCODE_DONE", 0):
+        if not self.is_order_check_passed(check_result):
+            check_retcode = check_result.get("retcode")
+            check_comment = check_result.get("comment")
             return OrderResult(
                 status=OrderExecutionStatus.REJECTED,
                 dry_run=False,
                 submitted_at=self._now(),
                 request_payload=request,
                 response_payload=check_result,
-                error_message=f"order_check rejected with retcode={check_retcode}",
+                error_message=f"order_check rejected with retcode={check_retcode} comment={check_comment}",
             )
 
         result = mt5.order_send(request)

@@ -50,6 +50,15 @@ class ExecutionEngine(PipelineStep):
         return datetime.now(timezone.utc)
 
     @staticmethod
+    def _is_order_check_passed(order_executor: MT5OrderExecutor, check_result: dict | None) -> bool:
+        checker = getattr(order_executor, "is_order_check_passed", None)
+        if callable(checker):
+            return bool(checker(check_result))
+
+        check_retcode = int((check_result or {}).get("retcode", -1))
+        return check_retcode > 0
+
+    @staticmethod
     def _is_demo_account(account_info: dict | None) -> tuple[bool, dict]:
         info = account_info or {}
         server = str(info.get("server", ""))
@@ -182,8 +191,7 @@ class ExecutionEngine(PipelineStep):
         try:
             request = self.order_executor.build_market_order_request(signal=signal, risk_plan=risk_plan)
             check_result = self.order_executor.order_check(request)
-            check_retcode = int((check_result or {}).get("retcode", -1))
-            if check_retcode <= 0:
+            if not self._is_order_check_passed(self.order_executor, check_result):
                 self.execution_repository.create_execution_order(
                     signal_id=signal_id,
                     execution_decision_id=decision_id,
