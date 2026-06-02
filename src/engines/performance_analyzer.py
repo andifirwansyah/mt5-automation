@@ -40,22 +40,50 @@ class PerformanceAnalyzer:
             max_dd = max(max_dd, drawdown)
         return max_dd
 
+    @staticmethod
+    def _resolve_position_profit(position: Position) -> float:
+        stored_profit = float(position.profit or 0.0)
+        detail_profit = float((position.details or {}).get("profit") or 0.0)
+        if stored_profit == 0.0 and detail_profit != 0.0:
+            return detail_profit
+        return stored_profit
+
+    @staticmethod
+    def _resolve_position_close_price(position: Position) -> float:
+        stored_close_price = float(position.close_price or 0.0)
+        stored_profit = float(position.profit or 0.0)
+        detail_profit = float((position.details or {}).get("profit") or 0.0)
+        detail_close_price = float((position.details or {}).get("price_current") or 0.0)
+        entry_price = float(position.entry_price or 0.0)
+        if stored_profit == 0.0 and detail_profit != 0.0 and (stored_close_price <= 0.0 or stored_close_price == entry_price) and detail_close_price > 0.0:
+            return detail_close_price
+        return stored_close_price
+
+    def _normalize_closed_position(self, position: Position) -> float:
+        resolved_profit = self._resolve_position_profit(position)
+        resolved_close_price = self._resolve_position_close_price(position)
+
+        if float(position.profit or 0.0) != resolved_profit:
+            position.profit = resolved_profit
+        if float(position.close_price or 0.0) != resolved_close_price:
+            position.close_price = resolved_close_price
+
+        return resolved_profit
+
     def run_cycle(self, reference_time: datetime | None = None) -> dict[str, float | int]:
         now = reference_time or self._utc_now()
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         session = self.performance_repository.session
-        summary_rows = session.execute(
-            select(
-                Position.id,
-                Position.account_id,
-                Position.profit,
-                Position.closed_at,
-            )
-            .where(and_(Position.status == "CLOSED", Position.closed_at >= day_start, Position.closed_at <= now))
-        ).all()
+        summary_positions = list(
+            session.execute(
+                select(Position).where(and_(Position.status == "CLOSED", Position.closed_at >= day_start, Position.closed_at <= now))
+            ).scalars().all()
+        )
 
-        profits = [float(r.profit or 0.0) for r in summary_rows]
+        normalized_profit_map = {position.id: self._normalize_closed_position(position) for position in summary_positions}
+
+        profits = list(normalized_profit_map.values())
         wins = [p for p in profits if p > 0]
         losses = [p for p in profits if p < 0]
 
@@ -99,22 +127,34 @@ class PerformanceAnalyzer:
                 rr_values.append(reward / risk)
         average_rr = self._safe_div(sum(rr_values), len(rr_values))
 
-        account_ids = {r.account_id for r in summary_rows if r.account_id is not None}
-        for account_id in account_ids:
+        account_profit_map: dict[uuid.UUID, list[float]] = defaultdict(list)
+        for position in summary_positions:
+            account_profit_map[position.account_id].append(normalized_profit_map[position.id])
+
+        for account_id, account_profits in account_profit_map.items():
+            account_wins = [p for p in account_profits if p > 0]
+            account_losses = [p for p in account_profits if p < 0]
+            account_total_trades = len(account_profits)
+            account_winning_trades = len(account_wins)
+            account_losing_trades = len(account_losses)
+            account_gross_profit = sum(account_wins)
+            account_gross_loss = sum(account_losses)
+            account_net_profit = account_gross_profit + account_gross_loss
+
             self.performance_repository.upsert_performance_daily(
                 account_id=account_id,
                 trade_date=day_start.date(),
-                gross_profit=gross_profit,
-                gross_loss=gross_loss,
-                net_profit=net_profit,
-                win_rate=win_rate,
-                total_trades=total_trades,
-                max_drawdown=max_drawdown,
+                gross_profit=account_gross_profit,
+                gross_loss=account_gross_loss,
+                net_profit=account_net_profit,
+                win_rate=self._safe_div(account_winning_trades, account_total_trades),
+                total_trades=account_total_trades,
+                max_drawdown=self._calculate_max_drawdown(account_profits),
                 details={
-                    "winning_trades": winning_trades,
-                    "losing_trades": losing_trades,
-                    "average_win": average_win,
-                    "average_loss": average_loss,
+                    "winning_trades": account_winning_trades,
+                    "losing_trades": account_losing_trades,
+                    "average_win": self._safe_div(account_gross_profit, account_winning_trades),
+                    "average_loss": self._safe_div(account_gross_loss, account_losing_trades),
                     "average_rr": average_rr,
                 },
             )
@@ -130,7 +170,7 @@ class PerformanceAnalyzer:
             risk = abs(entry - sl)
             if risk > 0:
                 rr = abs(tp - entry) / risk
-            grouped[key].append((float(r.profit or 0.0), rr))
+            grouped[key].append((normalized_profit_map.get(r.id, float(r.profit or 0.0)), rr))
 
         for (strategy_id, symbol_id, timeframe_id), items in grouped.items():
             strategy_profits = [p for p, _ in items]

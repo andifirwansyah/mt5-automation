@@ -159,3 +159,165 @@ def test_performance_recalculate_endpoint_populates_summary(monkeypatch) -> None
     summary_payload = summary_response.json()
     assert summary_payload["total_trades"] >= 1
     assert summary_payload["total_net_profit"] >= 40.0
+
+
+def test_performance_recalculate_backfills_profit_from_position_details(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
+    get_settings.cache_clear()
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    login_email = f"dashboard.user.{uuid.uuid4().hex[:10]}@example.com"
+    login_password = "Pass123."
+    _create_dashboard_user(login_email, login_password)
+
+    session = SessionLocal()
+    try:
+        account_repo = AccountRepository(session)
+        market_repo = MarketRepository(session)
+        position_repo = PositionRepository(session)
+
+        account = account_repo.get_or_create_trading_account(
+            account_number=f"acct-{uuid.uuid4().hex[:8]}",
+            account_name="Perf Detail Profit Test",
+            broker_server="Demo",
+            base_currency="USD",
+            leverage=100,
+            metadata={"source": "pytest"},
+        )
+        symbol = market_repo.get_or_create_symbol("XAUUSD")
+        position = position_repo.upsert_position(
+            account_id=account.id,
+            symbol_id=symbol.id,
+            side="BUY",
+            volume_lot=0.01,
+            entry_price=2300.0,
+            stop_loss=2295.0,
+            take_profit=2310.0,
+            close_price=2300.0,
+            profit=0.0,
+            status="CLOSED",
+            opened_at=now - timedelta(minutes=30),
+            closed_at=now - timedelta(minutes=5),
+            mt5_position_ticket=999100,
+            details={"price_current": 2306.0, "profit": 18.5, "source": "pytest-detail-profit"},
+        )
+        session.commit()
+
+        analyzer = PerformanceAnalyzer(PerformanceRepository(session))
+        result = analyzer.run_cycle(reference_time=now)
+        session.refresh(position)
+
+        assert result["total_trades"] >= 1
+        assert result["net_profit"] >= 18.5
+        assert float(position.profit or 0.0) == 18.5
+        assert float(position.close_price or 0.0) == 2306.0
+    finally:
+        session.close()
+
+    client = TestClient(app)
+    headers = _login_and_get_auth_headers(client, login_email, login_password)
+    summary_response = client.get("/api/v1/performance/summary", headers=headers)
+    assert summary_response.status_code == 200
+    summary_payload = summary_response.json()
+    assert summary_payload["total_trades"] >= 1
+    assert summary_payload["total_net_profit"] >= 18.5
+
+
+def test_close_position_uses_detail_profit_when_input_profit_zero() -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    session = SessionLocal()
+    try:
+        account_repo = AccountRepository(session)
+        market_repo = MarketRepository(session)
+        position_repo = PositionRepository(session)
+
+        account = account_repo.get_or_create_trading_account(
+            account_number=f"acct-{uuid.uuid4().hex[:8]}",
+            account_name="Close Position Detail Profit Test",
+            broker_server="Demo",
+            base_currency="USD",
+            leverage=100,
+            metadata={"source": "pytest"},
+        )
+        symbol = market_repo.get_or_create_symbol("XAUUSD")
+        position = position_repo.upsert_position(
+            account_id=account.id,
+            symbol_id=symbol.id,
+            side="BUY",
+            volume_lot=0.01,
+            entry_price=2300.0,
+            stop_loss=2295.0,
+            take_profit=2310.0,
+            status="OPEN",
+            opened_at=now - timedelta(minutes=15),
+            mt5_position_ticket=999101,
+            profit=0.0,
+            details={"price_current": 2304.5, "profit": 12.25, "source": "pytest-close-fallback"},
+        )
+        session.commit()
+
+        closed = position_repo.close_position(
+            position_id=position.id,
+            close_price=2300.0,
+            profit=0.0,
+            closed_at=now,
+        )
+        session.commit()
+        assert closed is not None
+
+        session.refresh(position)
+        assert float(position.profit or 0.0) == 12.25
+        assert float(position.close_price or 0.0) == 2304.5
+    finally:
+        session.close()
+
+
+def test_close_position_preserves_breakeven_close_when_detail_profit_zero() -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    session = SessionLocal()
+    try:
+        account_repo = AccountRepository(session)
+        market_repo = MarketRepository(session)
+        position_repo = PositionRepository(session)
+
+        account = account_repo.get_or_create_trading_account(
+            account_number=f"acct-{uuid.uuid4().hex[:8]}",
+            account_name="Close Position Breakeven Test",
+            broker_server="Demo",
+            base_currency="USD",
+            leverage=100,
+            metadata={"source": "pytest"},
+        )
+        symbol = market_repo.get_or_create_symbol("XAUUSD")
+        position = position_repo.upsert_position(
+            account_id=account.id,
+            symbol_id=symbol.id,
+            side="BUY",
+            volume_lot=0.01,
+            entry_price=2300.0,
+            stop_loss=2295.0,
+            take_profit=2310.0,
+            status="OPEN",
+            opened_at=now - timedelta(minutes=15),
+            mt5_position_ticket=999102,
+            profit=0.0,
+            details={"price_current": 2304.5, "profit": 0.0, "source": "pytest-breakeven"},
+        )
+        session.commit()
+
+        closed = position_repo.close_position(
+            position_id=position.id,
+            close_price=2300.0,
+            profit=0.0,
+            closed_at=now,
+        )
+        session.commit()
+        assert closed is not None
+
+        session.refresh(position)
+        assert float(position.profit or 0.0) == 0.0
+        assert float(position.close_price or 0.0) == 2300.0
+    finally:
+        session.close()

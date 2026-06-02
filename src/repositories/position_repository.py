@@ -119,8 +119,21 @@ class PositionRepository:
         if entity is None:
             return None
 
-        entity.close_price = close_price
-        entity.profit = profit
+        details = entity.details or {}
+        detail_close_price = float(details.get("price_current") or 0.0)
+        detail_profit = float(details.get("profit") or 0.0)
+        entry_price = float(entity.entry_price)
+
+        resolved_close_price = close_price
+        if detail_profit != 0.0 and (resolved_close_price <= 0 or resolved_close_price == entry_price) and detail_close_price > 0:
+            resolved_close_price = detail_close_price or close_price
+
+        resolved_profit = profit
+        if resolved_profit == 0.0 and detail_profit != 0.0:
+            resolved_profit = detail_profit
+
+        entity.close_price = resolved_close_price
+        entity.profit = resolved_profit
         entity.closed_at = closed_at
         entity.status = status
         self.session.add(entity)
