@@ -31,6 +31,10 @@ class SafetyRepository:
         )
         return self.session.execute(stmt).scalar_one_or_none()
 
+    def get_latest_kill_switch_state(self) -> KillSwitchState | None:
+        stmt = select(KillSwitchState).order_by(KillSwitchState.created_at.desc()).limit(1)
+        return self.session.execute(stmt).scalar_one_or_none()
+
     def activate_kill_switch(
         self,
         reason: str,

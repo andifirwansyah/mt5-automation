@@ -337,3 +337,67 @@ def test_positions_websocket_streams_open_and_update_events(monkeypatch) -> None
         assert closed_event["event"] == "position.closed"
         assert closed_event["payload"]["status"] == "CLOSED"
         assert closed_event["payload"]["close_price"] == 2303.0
+
+
+def test_kill_switch_websocket_streams_status_changes(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
+    get_settings.cache_clear()
+
+    login_email = f"dashboard.user.{uuid.uuid4().hex[:10]}@example.com"
+    login_password = "Pass123."
+    _create_dashboard_user(login_email, login_password)
+
+    cleanup_session = SessionLocal()
+    try:
+        repo = SafetyRepository(cleanup_session)
+        repo.deactivate_kill_switch(deactivated_by="pytest-pre-clean", details={"reason": "pre-clean"})
+        cleanup_session.commit()
+    finally:
+        cleanup_session.close()
+
+    client = TestClient(app)
+    headers = _login_and_get_auth_headers(client, login_email, login_password)
+    token = headers["Authorization"].split(" ", 1)[1]
+
+    with client.websocket_connect(f"/ws/v1/kill-switch?access_token={token}") as websocket:
+        snapshot_event = websocket.receive_json()
+        assert snapshot_event["event"] == "kill_switch.snapshot"
+        assert snapshot_event["payload"]["authenticated_user"] == login_email
+        assert snapshot_event["payload"]["is_active"] is False
+        assert snapshot_event["payload"]["kill_switch"] is None
+
+        activate_session = SessionLocal()
+        try:
+            repo = SafetyRepository(activate_session)
+            repo.activate_kill_switch(
+                reason="pytest activation",
+                activated_by="pytest",
+                activated_at=datetime.now(timezone.utc),
+            )
+            activate_session.commit()
+        finally:
+            activate_session.close()
+
+        activated_event = websocket.receive_json()
+        assert activated_event["event"] == "kill_switch.updated"
+        assert activated_event["payload"]["is_active"] is True
+        assert activated_event["payload"]["kill_switch"]["reason"] == "pytest activation"
+        assert activated_event["payload"]["kill_switch"]["is_active"] is True
+
+        deactivate_session = SessionLocal()
+        try:
+            repo = SafetyRepository(deactivate_session)
+            repo.deactivate_kill_switch(
+                deactivated_by="pytest",
+                deactivated_at=datetime.now(timezone.utc),
+                details={"reason": "pytest deactivate"},
+            )
+            deactivate_session.commit()
+        finally:
+            deactivate_session.close()
+
+        deactivated_event = websocket.receive_json()
+        assert deactivated_event["event"] == "kill_switch.updated"
+        assert deactivated_event["payload"]["is_active"] is False
+        assert deactivated_event["payload"]["kill_switch"]["is_active"] is False
+        assert deactivated_event["payload"]["kill_switch"]["deactivated_by"] == "pytest"
