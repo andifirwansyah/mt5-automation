@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from src.api.main import app
@@ -401,3 +403,50 @@ def test_kill_switch_websocket_streams_status_changes(monkeypatch) -> None:
         assert deactivated_event["payload"]["is_active"] is False
         assert deactivated_event["payload"]["kill_switch"]["is_active"] is False
         assert deactivated_event["payload"]["kill_switch"]["deactivated_by"] == "pytest"
+
+
+def test_positions_websocket_closes_db_session_before_send(monkeypatch) -> None:
+    from src.api.routes import ws_routes
+
+    captured: dict[str, object] = {}
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakePositionStreamService:
+        def __init__(self, session: FakeSession) -> None:
+            captured["session"] = session
+
+        def load_open_positions(self) -> dict[str, dict]:
+            return {"position-1": {"id": "position-1", "status": "OPEN"}}
+
+        def diff_positions(self, previous_state: dict[str, dict], current_state: dict[str, dict]) -> list:
+            return []
+
+    class FakeWebSocket:
+        query_params: dict[str, str] = {}
+        headers: dict[str, str] = {}
+
+        async def accept(self) -> None:
+            return None
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            session = captured["session"]
+            assert isinstance(session, FakeSession)
+            assert session.closed is True
+            assert payload["event"] == "positions.snapshot"
+            raise WebSocketDisconnect()
+
+    monkeypatch.setattr(ws_routes, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(ws_routes, "PositionStreamService", FakePositionStreamService)
+
+    async def fake_authenticate_websocket(websocket: object) -> dict[str, str]:
+        return {"email": "ops@example.com"}
+
+    monkeypatch.setattr(ws_routes, "_authenticate_websocket", fake_authenticate_websocket)
+
+    asyncio.run(ws_routes.stream_positions(FakeWebSocket()))

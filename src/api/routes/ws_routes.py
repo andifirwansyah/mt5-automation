@@ -61,12 +61,13 @@ async def stream_positions(websocket: WebSocket) -> None:
 
     try:
         while True:
+            outbound_messages: list[dict[str, object]] = []
             session = SessionLocal()
             try:
                 stream_service = PositionStreamService(session)
                 current_state = stream_service.load_open_positions()
                 if not initial_snapshot_sent:
-                    await websocket.send_json(
+                    outbound_messages.append(
                         {
                             "event": "positions.snapshot",
                             "trace_id": None,
@@ -81,7 +82,7 @@ async def stream_positions(websocket: WebSocket) -> None:
                 else:
                     events = stream_service.diff_positions(previous_state=previous_state, current_state=current_state)
                     for item in events:
-                        await websocket.send_json(
+                        outbound_messages.append(
                             {
                                 "event": item.event,
                                 "trace_id": None,
@@ -92,6 +93,9 @@ async def stream_positions(websocket: WebSocket) -> None:
                 previous_state = current_state
             finally:
                 session.close()
+
+            for message in outbound_messages:
+                await websocket.send_json(message)
 
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
@@ -111,37 +115,37 @@ async def stream_kill_switch_status(websocket: WebSocket) -> None:
 
     try:
         while True:
+            outbound_message: dict[str, object] | None = None
             session = SessionLocal()
             try:
                 stream_service = KillSwitchStreamService(SafetyRepository(session))
                 if previous_status is None:
                     current_status = stream_service.load_snapshot_status()
-                    await websocket.send_json(
-                        {
-                            "event": "kill_switch.snapshot",
-                            "trace_id": None,
-                            "occurred_at": _utc_now_iso(),
-                            "payload": {
-                                "authenticated_user": auth_result["email"],
-                                **current_status,
-                            },
-                        }
-                    )
+                    outbound_message = {
+                        "event": "kill_switch.snapshot",
+                        "trace_id": None,
+                        "occurred_at": _utc_now_iso(),
+                        "payload": {
+                            "authenticated_user": auth_result["email"],
+                            **current_status,
+                        },
+                    }
                     previous_status = current_status
                 else:
                     current_status = stream_service.load_current_status()
                     if current_status != previous_status:
-                        await websocket.send_json(
-                            {
-                                "event": "kill_switch.updated",
-                                "trace_id": None,
-                                "occurred_at": _utc_now_iso(),
-                                "payload": current_status,
-                            }
-                        )
+                        outbound_message = {
+                            "event": "kill_switch.updated",
+                            "trace_id": None,
+                            "occurred_at": _utc_now_iso(),
+                            "payload": current_status,
+                        }
                     previous_status = current_status
             finally:
                 session.close()
+
+            if outbound_message is not None:
+                await websocket.send_json(outbound_message)
 
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
