@@ -61,6 +61,14 @@ class PerformanceRepository:
         self.session.flush()
         return entity
 
+    def get_performance_daily(self, account_id: uuid.UUID, trade_date: date) -> PerformanceDaily | None:
+        stmt = (
+            select(PerformanceDaily)
+            .where(PerformanceDaily.account_id == account_id, PerformanceDaily.trade_date == trade_date)
+            .limit(1)
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
     def create_performance_by_strategy(
         self,
         strategy_id: uuid.UUID,

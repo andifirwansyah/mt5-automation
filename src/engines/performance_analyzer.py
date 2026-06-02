@@ -70,20 +70,77 @@ class PerformanceAnalyzer:
 
         return resolved_profit
 
+    @staticmethod
+    def _resolve_trade_date(position: Position) -> date | None:
+        if position.closed_at is None:
+            return None
+        return position.closed_at.astimezone(timezone.utc).date()
+
+    def _normalize_all_closed_positions(self, now: datetime) -> tuple[list[Position], dict[uuid.UUID, float]]:
+        session = self.performance_repository.session
+        closed_positions = list(
+            session.execute(
+                select(Position).where(and_(Position.status == "CLOSED", Position.closed_at.is_not(None), Position.closed_at <= now))
+            ).scalars().all()
+        )
+        normalized_profit_map = {position.id: self._normalize_closed_position(position) for position in closed_positions}
+        return closed_positions, normalized_profit_map
+
+    def _upsert_daily_performance_history(
+        self,
+        positions: list[Position],
+        normalized_profit_map: dict[uuid.UUID, float],
+    ) -> None:
+        grouped_positions: dict[tuple[uuid.UUID, date], list[Position]] = defaultdict(list)
+        for position in positions:
+            trade_date = self._resolve_trade_date(position)
+            if trade_date is None:
+                continue
+            grouped_positions[(position.account_id, trade_date)].append(position)
+
+        for (account_id, trade_date), daily_positions in grouped_positions.items():
+            account_profits = [normalized_profit_map[position.id] for position in daily_positions]
+            account_wins = [p for p in account_profits if p > 0]
+            account_losses = [p for p in account_profits if p < 0]
+            account_total_trades = len(account_profits)
+            account_winning_trades = len(account_wins)
+            account_losing_trades = len(account_losses)
+            account_gross_profit = sum(account_wins)
+            account_gross_loss = sum(account_losses)
+            account_net_profit = account_gross_profit + account_gross_loss
+
+            self.performance_repository.upsert_performance_daily(
+                account_id=account_id,
+                trade_date=trade_date,
+                gross_profit=account_gross_profit,
+                gross_loss=account_gross_loss,
+                net_profit=account_net_profit,
+                win_rate=self._safe_div(account_winning_trades, account_total_trades),
+                total_trades=account_total_trades,
+                max_drawdown=self._calculate_max_drawdown(account_profits),
+                details={
+                    "winning_trades": account_winning_trades,
+                    "losing_trades": account_losing_trades,
+                    "average_win": self._safe_div(account_gross_profit, account_winning_trades),
+                    "average_loss": self._safe_div(account_gross_loss, account_losing_trades),
+                },
+            )
+
     def run_cycle(self, reference_time: datetime | None = None) -> dict[str, float | int]:
         now = reference_time or self._utc_now()
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         session = self.performance_repository.session
+        all_closed_positions, normalized_profit_map = self._normalize_all_closed_positions(now)
+        self._upsert_daily_performance_history(all_closed_positions, normalized_profit_map)
+
         summary_positions = list(
             session.execute(
                 select(Position).where(and_(Position.status == "CLOSED", Position.closed_at >= day_start, Position.closed_at <= now))
             ).scalars().all()
         )
 
-        normalized_profit_map = {position.id: self._normalize_closed_position(position) for position in summary_positions}
-
-        profits = list(normalized_profit_map.values())
+        profits = [normalized_profit_map[position.id] for position in summary_positions]
         wins = [p for p in profits if p > 0]
         losses = [p for p in profits if p < 0]
 
@@ -132,32 +189,13 @@ class PerformanceAnalyzer:
             account_profit_map[position.account_id].append(normalized_profit_map[position.id])
 
         for account_id, account_profits in account_profit_map.items():
-            account_wins = [p for p in account_profits if p > 0]
-            account_losses = [p for p in account_profits if p < 0]
-            account_total_trades = len(account_profits)
-            account_winning_trades = len(account_wins)
-            account_losing_trades = len(account_losses)
-            account_gross_profit = sum(account_wins)
-            account_gross_loss = sum(account_losses)
-            account_net_profit = account_gross_profit + account_gross_loss
-
-            self.performance_repository.upsert_performance_daily(
-                account_id=account_id,
-                trade_date=day_start.date(),
-                gross_profit=account_gross_profit,
-                gross_loss=account_gross_loss,
-                net_profit=account_net_profit,
-                win_rate=self._safe_div(account_winning_trades, account_total_trades),
-                total_trades=account_total_trades,
-                max_drawdown=self._calculate_max_drawdown(account_profits),
-                details={
-                    "winning_trades": account_winning_trades,
-                    "losing_trades": account_losing_trades,
-                    "average_win": self._safe_div(account_gross_profit, account_winning_trades),
-                    "average_loss": self._safe_div(account_gross_loss, account_losing_trades),
-                    "average_rr": average_rr,
-                },
-            )
+            account_daily = self.performance_repository.get_performance_daily(account_id=account_id, trade_date=day_start.date())
+            if account_daily is None:
+                continue
+            details = dict(account_daily.details or {})
+            details["average_rr"] = average_rr
+            account_daily.details = details
+            self.performance_repository.session.add(account_daily)
 
         # performance_by_strategy aggregation per strategy+symbol+timeframe
         grouped: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID], list[tuple[float, float]]] = defaultdict(list)
