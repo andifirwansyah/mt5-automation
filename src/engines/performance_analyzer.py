@@ -45,6 +45,32 @@ class PerformanceAnalyzer:
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         session = self.performance_repository.session
+        summary_rows = session.execute(
+            select(
+                Position.id,
+                Position.account_id,
+                Position.profit,
+                Position.closed_at,
+            )
+            .where(and_(Position.status == "CLOSED", Position.closed_at >= day_start, Position.closed_at <= now))
+        ).all()
+
+        profits = [float(r.profit or 0.0) for r in summary_rows]
+        wins = [p for p in profits if p > 0]
+        losses = [p for p in profits if p < 0]
+
+        total_trades = len(profits)
+        winning_trades = len(wins)
+        losing_trades = len(losses)
+        win_rate = self._safe_div(winning_trades, total_trades)
+        gross_profit = sum(wins)
+        gross_loss = sum(losses)
+        net_profit = gross_profit + gross_loss
+        profit_factor = self._safe_div(gross_profit, abs(gross_loss)) if gross_loss != 0 else (gross_profit if gross_profit > 0 else 0.0)
+        max_drawdown = self._calculate_max_drawdown(profits)
+        average_win = self._safe_div(gross_profit, winning_trades)
+        average_loss = self._safe_div(gross_loss, losing_trades)
+
         rows = session.execute(
             select(
                 Position.id,
@@ -62,22 +88,6 @@ class PerformanceAnalyzer:
             .where(and_(Position.status == "CLOSED", Position.closed_at >= day_start, Position.closed_at <= now))
         ).all()
 
-        profits = [float(r.profit or 0.0) for r in rows]
-        wins = [p for p in profits if p > 0]
-        losses = [p for p in profits if p < 0]
-
-        total_trades = len(profits)
-        winning_trades = len(wins)
-        losing_trades = len(losses)
-        win_rate = self._safe_div(winning_trades, total_trades)
-        gross_profit = sum(wins)
-        gross_loss = sum(losses)
-        net_profit = gross_profit + gross_loss
-        profit_factor = self._safe_div(gross_profit, abs(gross_loss)) if gross_loss != 0 else (gross_profit if gross_profit > 0 else 0.0)
-        max_drawdown = self._calculate_max_drawdown(profits)
-        average_win = self._safe_div(gross_profit, winning_trades)
-        average_loss = self._safe_div(gross_loss, losing_trades)
-
         rr_values: list[float] = []
         for r in rows:
             entry = float(r.entry_price or 0.0)
@@ -89,7 +99,7 @@ class PerformanceAnalyzer:
                 rr_values.append(reward / risk)
         average_rr = self._safe_div(sum(rr_values), len(rr_values))
 
-        account_ids = {r.account_id for r in rows if r.account_id is not None}
+        account_ids = {r.account_id for r in summary_rows if r.account_id is not None}
         for account_id in account_ids:
             self.performance_repository.upsert_performance_daily(
                 account_id=account_id,

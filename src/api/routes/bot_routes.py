@@ -4,17 +4,28 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, model_to_dict
+from src.config.settings import get_settings
 from src.infrastructure.database.models import BotInstance, BotRuntimeState
 from src.repositories.safety_repository import SafetyRepository
-from src.schemas import MessageResponse
+from src.schemas import MessageResponse, RuntimeConfigUpdatePayload
+from src.services.runtime_config_service import RuntimeConfigService
+from src.infrastructure.database.session import SessionLocal
 
 router = APIRouter(prefix="/api/v1/bot", tags=["bot"])
+
+
+def _runtime_config_service() -> RuntimeConfigService:
+    return RuntimeConfigService(
+        session_factory=SessionLocal,
+        bootstrap_settings=get_settings(),
+        cache_ttl_seconds=0.0,
+    )
 
 
 class KillSwitchPayload(BaseModel):
@@ -49,3 +60,24 @@ def deactivate_kill_switch(payload: KillSwitchPayload, db: Session = Depends(get
     repo.deactivate_kill_switch(deactivated_by=payload.actor, deactivated_at=datetime.now(timezone.utc), details={"reason": payload.reason})
     db.commit()
     return MessageResponse(message="Kill switch deactivated")
+
+
+@router.get("/runtime-configs")
+def list_runtime_configs() -> dict:
+    service = _runtime_config_service()
+    return {"items": service.list_effective_configs(force_refresh=True)}
+
+
+@router.put("/runtime-configs/{config_key}")
+def update_runtime_config(config_key: str, payload: RuntimeConfigUpdatePayload) -> dict:
+    service = _runtime_config_service()
+    try:
+        updated = service.update_config(
+            config_key=config_key,
+            config_value=payload.value,
+            updated_by=payload.actor,
+            update_reason=payload.reason,
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return {"config": model_to_dict(updated)}

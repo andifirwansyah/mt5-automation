@@ -21,6 +21,7 @@ class AccountSnapshotService:
         return datetime.now(timezone.utc)
 
     def save_account_snapshot(self, account_id: uuid.UUID, payload: dict[str, Any]) -> AccountSnapshot:
+        raw_payload = payload.get("raw_payload", payload)
         snapshot = self.account_repository.create_account_snapshot(
             account_id=account_id,
             balance=float(payload.get("balance", 0.0)),
@@ -30,7 +31,7 @@ class AccountSnapshotService:
             margin_level=float(payload.get("margin_level", 0.0)),
             profit=float(payload.get("profit", 0.0)),
             snapshot_time=payload.get("snapshot_time", self._utc_now()),
-            raw_payload=payload,
+            raw_payload=raw_payload,
         )
         self.account_repository.session.commit()
         return snapshot

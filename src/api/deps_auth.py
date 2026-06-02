@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db
@@ -13,21 +14,31 @@ from src.repositories.auth_repository import AuthRepository
 from src.services.auth_token_service import hash_access_token, verify_access_token
 
 
-def parse_bearer_token(authorization: str | None) -> str:
-    if authorization is None:
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def parse_bearer_token(credentials: HTTPAuthorizationCredentials | None) -> str:
+    if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing authorization header")
 
-    scheme, _, token = authorization.partition(" ")
+    scheme = str(credentials.scheme or "")
+    token = str(credentials.credentials or "")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
     return token
 
 
 def require_authenticated_user(
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> dict:
-    token = parse_bearer_token(authorization)
+    token = parse_bearer_token(credentials)
+
+    return authenticate_access_token(token=token, db=db)
+
+
+def authenticate_access_token(token: str, db: Session) -> dict:
+    """Validate token and return authenticated user context."""
 
     settings = get_settings()
     if not settings.dashboard_auth_secret:

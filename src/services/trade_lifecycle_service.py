@@ -41,10 +41,14 @@ class TradeLifecycleService:
             if int(ticket) in mt5_open_tickets:
                 continue
 
+            details = db_pos.details or {}
+            close_price = float(details.get("price_current") or db_pos.close_price or db_pos.entry_price)
+            profit = float(details.get("profit") or db_pos.profit or 0.0)
+
             closed = self.position_repository.close_position(
                 position_id=db_pos.id,
-                close_price=float(db_pos.close_price or db_pos.entry_price),
-                profit=float(db_pos.profit or 0.0),
+                close_price=close_price,
+                profit=profit,
                 closed_at=self._utc_now(),
             )
             if closed is None:

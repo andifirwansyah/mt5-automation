@@ -10,6 +10,7 @@ from src.repositories.performance_repository import PerformanceRepository
 from src.repositories.position_repository import PositionRepository
 from src.repositories.regime_repository import RegimeRepository
 from src.repositories.risk_repository import RiskRepository
+from src.repositories.runtime_config_repository import RuntimeConfigRepository
 from src.repositories.safety_repository import SafetyRepository
 from src.repositories.signal_repository import SignalRepository
 from src.repositories.strategy_repository import StrategyRepository
@@ -23,6 +24,7 @@ __all__ = [
     "StrategyRepository",
     "SignalRepository",
     "RiskRepository",
+    "RuntimeConfigRepository",
     "ExecutionRepository",
     "PositionRepository",
     "SafetyRepository",

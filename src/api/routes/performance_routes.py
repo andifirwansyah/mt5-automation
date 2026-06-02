@@ -7,7 +7,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, paginate_query, pagination_params
+from src.engines.performance_analyzer import PerformanceAnalyzer
 from src.infrastructure.database.models import PerformanceByStrategy, PerformanceDaily, StrategyFeedbackEvent
+from src.repositories.performance_repository import PerformanceRepository
 
 router = APIRouter(prefix="/api/v1", tags=["performance"])
 
@@ -22,6 +24,13 @@ def get_performance_summary(db: Session = Depends(get_db)) -> dict:
         "total_net_profit": total_net_profit,
         "average_win_rate": avg_win_rate,
     }
+
+
+@router.post("/performance/recalculate")
+def recalculate_performance(db: Session = Depends(get_db)) -> dict:
+    analyzer = PerformanceAnalyzer(PerformanceRepository(db))
+    result = analyzer.run_cycle()
+    return {"message": "Performance recalculated", "result": result}
 
 
 @router.get("/performance/daily")

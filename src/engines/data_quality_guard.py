@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from src.config.settings import AppSettings, get_settings
 from src.domain.enums import ValidationStatus
 from src.domain.models.validation_result import ValidationResult
 from src.pipeline.pipeline_step import PipelineStep
@@ -20,10 +21,17 @@ class DataQualityGuard(PipelineStep):
     def name(self) -> str:
         return "DataQualityGuard"
 
-    def __init__(self, market_repository: MarketRepository, candle_service: CandleService, max_spread: float = 50.0) -> None:
+    def __init__(
+        self,
+        market_repository: MarketRepository,
+        candle_service: CandleService,
+        max_spread: float | None = None,
+        settings: AppSettings | None = None,
+    ) -> None:
         self.market_repository = market_repository
         self.candle_service = candle_service
         self.max_spread = max_spread
+        self.settings = settings or get_settings()
 
     @staticmethod
     def _timeframe_to_minutes(timeframe: str) -> int:
@@ -58,6 +66,7 @@ class DataQualityGuard(PipelineStep):
     def run(self, context: TradingContext) -> TradingContext:
         issues: list[dict[str, Any]] = []
         checked_at = datetime.now(timezone.utc)
+        max_spread = float(self.max_spread if self.max_spread is not None else self.settings.max_spread)
 
         ingestion = context.ingestion_result or {}
         symbol_id = ingestion.get("symbol_id")
@@ -75,8 +84,8 @@ class DataQualityGuard(PipelineStep):
                 issues.append({"check": "OHLC_INVALID", "message": "open outside range"})
 
             spread = snapshot.spread
-            if spread is not None and float(spread) > self.max_spread:
-                issues.append({"check": "SPREAD_ABNORMAL", "message": f"spread={spread} > max_spread={self.max_spread}"})
+            if spread is not None and float(spread) > max_spread:
+                issues.append({"check": "SPREAD_ABNORMAL", "message": f"spread={spread} > max_spread={max_spread}"})
 
         if ingestion.get("duplicate_entry_candle"):
             issues.append({"check": "DUPLICATE_CANDLE", "message": "entry candle duplicated"})

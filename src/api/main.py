@@ -19,6 +19,7 @@ from src.api.routes.regime_routes import router as regime_router
 from src.api.routes.risk_routes import router as risk_router
 from src.api.routes.signal_routes import router as signal_router
 from src.api.routes.strategy_routes import router as strategy_router
+from src.api.routes.ws_routes import router as ws_router
 from src.config.settings import get_settings
 
 
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(position_router, dependencies=protected_dependencies)
     app.include_router(journal_router, dependencies=protected_dependencies)
     app.include_router(performance_router, dependencies=protected_dependencies)
+    app.include_router(ws_router)
 
     return app
 

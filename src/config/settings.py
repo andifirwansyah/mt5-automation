@@ -73,6 +73,7 @@ class AppSettings(BaseSettings):
     context_timeframes_csv: str = Field(default="M15,M30,H1,H4", alias="CONTEXT_TIMEFRAMES")
     listener_interval_seconds: float = Field(default=1.0, alias="LISTENER_INTERVAL_SECONDS")
     position_sync_interval_seconds: float = Field(default=5.0, alias="POSITION_SYNC_INTERVAL_SECONDS")
+    account_snapshot_interval_seconds: float = Field(default=5.0, alias="ACCOUNT_SNAPSHOT_INTERVAL_SECONDS")
     heartbeat_interval_seconds: float = Field(default=10.0, alias="HEARTBEAT_INTERVAL_SECONDS")
     performance_interval_seconds: float = Field(default=300.0, alias="PERFORMANCE_INTERVAL_SECONDS")
 

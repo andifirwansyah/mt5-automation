@@ -6,10 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from src.infrastructure.database.models import Position, PositionSnapshot
+from src.infrastructure.database.models import ExecutionOrder, Position, PositionSnapshot
 
 
 class PositionRepository:
@@ -126,3 +126,54 @@ class PositionRepository:
         self.session.add(entity)
         self.session.flush()
         return entity
+
+    def find_matching_execution_order_id(
+        self,
+        symbol_id: uuid.UUID,
+        side: str,
+        volume_lot: float,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float,
+        opened_at: datetime,
+    ) -> uuid.UUID | None:
+        candidate_time_lower = opened_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        candidate_time_upper = opened_at
+
+        stmt = (
+            select(ExecutionOrder)
+            .outerjoin(Position, Position.execution_order_id == ExecutionOrder.id)
+            .where(
+                ExecutionOrder.symbol_id == symbol_id,
+                ExecutionOrder.side == side,
+                ExecutionOrder.status.in_(["FILLED", "SUBMITTED"]),
+                Position.id.is_(None),
+                or_(
+                    ExecutionOrder.executed_at.is_(None),
+                    and_(
+                        ExecutionOrder.executed_at >= candidate_time_lower,
+                        ExecutionOrder.executed_at <= candidate_time_upper,
+                    ),
+                ),
+            )
+            .order_by(ExecutionOrder.executed_at.desc().nullslast(), ExecutionOrder.created_at.desc())
+            .limit(25)
+        )
+        candidates = list(self.session.execute(stmt).scalars().all())
+        if not candidates:
+            return None
+
+        def _score(order: ExecutionOrder) -> tuple[float, float]:
+            price_score = abs(float(order.requested_price) - entry_price)
+            sl_score = abs(float(order.stop_loss) - stop_loss)
+            tp_score = abs(float(order.take_profit) - take_profit)
+            volume_score = abs(float(order.volume_lot) - volume_lot)
+            order_time = order.executed_at or order.created_at or opened_at
+            time_score = abs((opened_at - order_time).total_seconds())
+            return (volume_score + price_score + sl_score + tp_score, time_score)
+
+        best = min(candidates, key=_score)
+        best_volume_diff = abs(float(best.volume_lot) - volume_lot)
+        if best_volume_diff > 0.0001:
+            return None
+        return best.id

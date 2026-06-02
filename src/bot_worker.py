@@ -10,6 +10,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from src.config.logging_config import setup_logging
+from src.config.runtime_config import RuntimeSettingsProxy
 from src.config.settings import get_settings
 from src.engines import (
     ApprovalEngine,
@@ -58,6 +59,7 @@ from src.repositories import (
 )
 from src.services import (
     AccountSnapshotService,
+    AccountSnapshotUpdaterService,
     BotRuntimeService,
     CandleService,
     EngineAuditService,
@@ -65,6 +67,7 @@ from src.services import (
     PositionSyncService,
     RejectionJournalService,
     RuntimeRecoveryService,
+    RuntimeConfigService,
     RuntimeStateService,
     TradeLifecycleService,
 )
@@ -83,6 +86,7 @@ def main() -> None:
     performance_session = SessionLocal()
 
     heartbeat_service: HeartbeatService | None = None
+    account_snapshot_updater: AccountSnapshotUpdaterService | None = None
     listener: MT5ListenerEngine | None = None
     performance_orchestrator: PerformanceOrchestrator | None = None
     mt5_connection: MT5Connection | None = None
@@ -124,6 +128,14 @@ def main() -> None:
         position_sync_service = PositionSyncService(MT5PositionClient(), position_repo, market_repo)
 
         bot_runtime_service = BotRuntimeService(bot_repo)
+        runtime_config_service = RuntimeConfigService(
+            session_factory=SessionLocal,
+            bootstrap_settings=settings,
+            cache_ttl_seconds=2.0,
+        )
+        runtime_config_service.seed_defaults_if_missing(updated_by="bot_worker")
+        runtime_settings = RuntimeSettingsProxy(settings, runtime_config_service)
+
         bot_instance = bot_runtime_service.register_bot_instance(
             instance_name="bot-worker",
             host_name=socket.gethostname(),
@@ -131,7 +143,7 @@ def main() -> None:
             metadata={
                 "symbol": settings.trading_symbol,
                 "timeframe": settings.trading_timeframe,
-                "dry_run": settings.dry_run,
+                "dry_run": runtime_settings.dry_run,
             },
         )
         bot_instance_id = bot_instance.id
@@ -144,7 +156,7 @@ def main() -> None:
         market_data = MT5MarketData()
         account_client = MT5AccountClient()
         position_client = MT5PositionClient()
-        order_executor = MT5OrderExecutor(settings)
+        order_executor = MT5OrderExecutor(runtime_settings)
         health_client = MT5HealthClient(mt5_connection, market_data, account_client)
 
         # resolve trading account id for position sync/recovery
@@ -191,8 +203,16 @@ def main() -> None:
         )
         heartbeat_service.start()
 
+        account_snapshot_updater = AccountSnapshotUpdaterService(
+            session_factory=SessionLocal,
+            account_client=account_client,
+            account_id=trading_account.id,
+            interval_seconds=settings.account_snapshot_interval_seconds,
+        )
+        account_snapshot_updater.start()
+
         # engines
-        kill_switch_monitor = KillSwitchMonitor(safety_repo, settings)
+        kill_switch_monitor = KillSwitchMonitor(safety_repo, runtime_settings)
         data_collector = DataCollectorEngine(
             market_data=market_data,
             account_client=account_client,
@@ -200,7 +220,7 @@ def main() -> None:
             context_timeframes=settings.context_timeframes,
         )
         ingestion_engine = MarketDataIngestionEngine(market_repo, account_repo, candle_service, account_snapshot_service)
-        data_quality = DataQualityGuard(market_repo, candle_service, max_spread=settings.max_spread)
+        data_quality = DataQualityGuard(market_repo, candle_service, settings=runtime_settings)
         market_event = MarketEventFilter(market_repo)
         regime_engine = MarketRegimeEngine(
             regime_repo,
@@ -214,14 +234,14 @@ def main() -> None:
         strategy_selector = StrategySelector(strategy_repo)
         strategy_engine = StrategyEngine()
         signal_builder = SignalContractBuilder(signal_repo, strategy_repo)
-        signal_validator = SignalValidator(signal_repo, position_repo, settings)
-        edge_validator = HistoricalEdgeValidator(signal_repo, settings)
-        risk_engine = RiskEngine(risk_repo, settings)
-        pretrade_engine = PreTradeSimulation(risk_repo, settings)
-        broker_health = BrokerHealthCheck(health_client, execution_repo, settings)
-        execution_gate = ExecutionGate(execution_repo, safety_repo, settings)
-        approval_engine = ApprovalEngine(execution_repo, settings)
-        execution_engine = ExecutionEngine(execution_repo, safety_repo, order_executor, settings)
+        signal_validator = SignalValidator(signal_repo, position_repo, runtime_settings)
+        edge_validator = HistoricalEdgeValidator(signal_repo, runtime_settings)
+        risk_engine = RiskEngine(risk_repo, runtime_settings)
+        pretrade_engine = PreTradeSimulation(risk_repo, runtime_settings)
+        broker_health = BrokerHealthCheck(health_client, execution_repo, runtime_settings)
+        execution_gate = ExecutionGate(execution_repo, safety_repo, runtime_settings)
+        approval_engine = ApprovalEngine(execution_repo, runtime_settings)
+        execution_engine = ExecutionEngine(execution_repo, safety_repo, order_executor, runtime_settings)
         trade_journal_engine = TradeJournalEngine(journal_repo)
         runtime_state_updater = RuntimeStateUpdater(runtime_state_service)
 
@@ -263,7 +283,7 @@ def main() -> None:
         perf_repo = PerformanceRepository(performance_session)
         performance_orchestrator = PerformanceOrchestrator(
             performance_analyzer=PerformanceAnalyzer(perf_repo),
-            strategy_feedback_loop=StrategyFeedbackLoop(perf_repo, settings),
+            strategy_feedback_loop=StrategyFeedbackLoop(perf_repo, runtime_settings),
         )
         performance_orchestrator.start(interval_seconds=settings.performance_interval_seconds)
 
@@ -310,6 +330,8 @@ def main() -> None:
             listener.stop()
         if heartbeat_service is not None:
             heartbeat_service.stop()
+        if account_snapshot_updater is not None:
+            account_snapshot_updater.stop()
         if performance_orchestrator is not None:
             performance_orchestrator.stop()
 

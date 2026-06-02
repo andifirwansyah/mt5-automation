@@ -34,6 +34,15 @@ class PositionSyncService:
 
             side = "BUY" if int(row.get("type", 0)) == 0 else "SELL"
             opened_at = datetime.fromtimestamp(int(row.get("time", 0)), tz=timezone.utc)
+            execution_order_id = self.position_repository.find_matching_execution_order_id(
+                symbol_id=symbol.id,
+                side=side,
+                volume_lot=float(row.get("volume", 0.0)),
+                entry_price=float(row.get("price_open", 0.0)),
+                stop_loss=float(row.get("sl", 0.0)),
+                take_profit=float(row.get("tp", 0.0)),
+                opened_at=opened_at,
+            )
 
             synced.append(
                 self.position_repository.upsert_position(
@@ -46,7 +55,9 @@ class PositionSyncService:
                     take_profit=float(row.get("tp", 0.0)),
                     status="OPEN",
                     opened_at=opened_at,
+                    execution_order_id=execution_order_id,
                     mt5_position_ticket=int(row.get("ticket", 0)),
+                    profit=float(row.get("profit", 0.0)),
                     details=row,
                 )
             )
