@@ -450,3 +450,93 @@ def test_positions_websocket_closes_db_session_before_send(monkeypatch) -> None:
     monkeypatch.setattr(ws_routes, "_authenticate_websocket", fake_authenticate_websocket)
 
     asyncio.run(ws_routes.stream_positions(FakeWebSocket()))
+
+
+def test_positions_websocket_stops_on_client_disconnect_while_idle(monkeypatch) -> None:
+    from src.api.routes import ws_routes
+
+    class FakeSession:
+        def close(self) -> None:
+            return None
+
+    class FakePositionStreamService:
+        def __init__(self, session: FakeSession) -> None:
+            self.session = session
+
+        def load_open_positions(self) -> dict[str, dict]:
+            return {}
+
+        def diff_positions(self, previous_state: dict[str, dict], current_state: dict[str, dict]) -> list:
+            return []
+
+    class FakeWebSocket:
+        query_params: dict[str, str] = {}
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.sent_events: list[str] = []
+            self.receive_calls = 0
+
+        async def accept(self) -> None:
+            return None
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            self.sent_events.append(str(payload["event"]))
+
+        async def receive(self) -> dict[str, object]:
+            self.receive_calls += 1
+            return {"type": "websocket.disconnect", "code": 1000, "reason": "client closed"}
+
+    websocket = FakeWebSocket()
+
+    monkeypatch.setattr(ws_routes, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(ws_routes, "PositionStreamService", FakePositionStreamService)
+
+    async def fake_authenticate_websocket(websocket: object) -> dict[str, str]:
+        return {"email": "ops@example.com"}
+
+    monkeypatch.setattr(ws_routes, "_authenticate_websocket", fake_authenticate_websocket)
+
+    asyncio.run(ws_routes.stream_positions(websocket))
+
+    assert websocket.sent_events == ["positions.snapshot"]
+    assert websocket.receive_calls == 1
+
+
+def test_kill_switch_websocket_normalizes_send_runtime_error_as_disconnect(monkeypatch) -> None:
+    from src.api.routes import ws_routes
+
+    class FakeSession:
+        def close(self) -> None:
+            return None
+
+    class FakeStreamService:
+        def __init__(self, repository: object) -> None:
+            self.repository = repository
+
+        def load_snapshot_status(self) -> dict[str, object | None]:
+            return {"is_active": False, "kill_switch": None}
+
+    class FakeWebSocket:
+        query_params: dict[str, str] = {}
+        headers: dict[str, str] = {}
+
+        async def accept(self) -> None:
+            return None
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            raise RuntimeError("Unexpected ASGI message 'websocket.send', after sending 'websocket.close' or response already completed.")
+
+        async def receive(self) -> dict[str, object]:
+            return {"type": "websocket.disconnect", "code": 1000}
+
+    monkeypatch.setattr(ws_routes, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(ws_routes, "KillSwitchStreamService", FakeStreamService)
+    monkeypatch.setattr(ws_routes, "SafetyRepository", lambda session: object())
+
+    async def fake_authenticate_websocket(websocket: object) -> dict[str, str]:
+        return {"email": "ops@example.com"}
+
+    monkeypatch.setattr(ws_routes, "_authenticate_websocket", fake_authenticate_websocket)
+
+    asyncio.run(ws_routes.stream_kill_switch_status(FakeWebSocket()))

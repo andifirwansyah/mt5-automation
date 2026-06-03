@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
@@ -22,6 +23,36 @@ class WebSocketAuthenticationError(Exception):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _wait_for_disconnect(websocket: WebSocket, timeout_seconds: float) -> None:
+    """Wait for a client disconnect without blocking the stream loop forever."""
+    try:
+        message = await asyncio.wait_for(websocket.receive(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        return
+
+    if message.get("type") == "websocket.disconnect":
+        raise WebSocketDisconnect(
+            code=int(message.get("code") or status.WS_1000_NORMAL_CLOSURE),
+            reason=message.get("reason"),
+        )
+
+
+async def _send_json_or_disconnect(websocket: WebSocket, payload: dict[str, Any]) -> None:
+    """Send websocket JSON safely and normalize disconnect-like runtime errors."""
+    try:
+        await websocket.send_json(payload)
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        if (
+            "close message" in message
+            or "websocket is not connected" in message
+            or "response already completed" in message
+            or "after sending 'websocket.close'" in message
+        ):
+            raise WebSocketDisconnect(code=status.WS_1000_NORMAL_CLOSURE) from exc
+        raise
 
 
 async def _authenticate_websocket(websocket: WebSocket) -> dict[str, str | int]:
@@ -95,9 +126,9 @@ async def stream_positions(websocket: WebSocket) -> None:
                 session.close()
 
             for message in outbound_messages:
-                await websocket.send_json(message)
+                await _send_json_or_disconnect(websocket, message)
 
-            await asyncio.sleep(1.0)
+            await _wait_for_disconnect(websocket, timeout_seconds=1.0)
     except WebSocketDisconnect:
         return
 
@@ -145,8 +176,8 @@ async def stream_kill_switch_status(websocket: WebSocket) -> None:
                 session.close()
 
             if outbound_message is not None:
-                await websocket.send_json(outbound_message)
+                await _send_json_or_disconnect(websocket, outbound_message)
 
-            await asyncio.sleep(1.0)
+            await _wait_for_disconnect(websocket, timeout_seconds=1.0)
     except WebSocketDisconnect:
         return
