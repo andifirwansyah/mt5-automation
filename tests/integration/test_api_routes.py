@@ -540,3 +540,16 @@ def test_kill_switch_websocket_normalizes_send_runtime_error_as_disconnect(monke
     monkeypatch.setattr(ws_routes, "_authenticate_websocket", fake_authenticate_websocket)
 
     asyncio.run(ws_routes.stream_kill_switch_status(FakeWebSocket()))
+
+
+def test_websocket_heartbeat_message_contract() -> None:
+    from src.api.routes.ws_routes import _heartbeat_message
+
+    positions_message = _heartbeat_message("positions.heartbeat")
+    kill_switch_message = _heartbeat_message("kill_switch.heartbeat")
+
+    assert positions_message["event"] == "positions.heartbeat"
+    assert positions_message["trace_id"] is None
+    assert positions_message["payload"] == {"status": "alive"}
+    assert kill_switch_message["event"] == "kill_switch.heartbeat"
+    assert kill_switch_message["payload"] == {"status": "alive"}

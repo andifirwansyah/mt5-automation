@@ -15,6 +15,8 @@ from src.services.kill_switch_stream_service import KillSwitchStreamService
 from src.services.position_stream_service import PositionStreamService
 
 router = APIRouter(tags=["ws"])
+WEBSOCKET_POLL_INTERVAL_SECONDS = 1.0
+WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
 class WebSocketAuthenticationError(Exception):
@@ -55,6 +57,15 @@ async def _send_json_or_disconnect(websocket: WebSocket, payload: dict[str, Any]
         raise
 
 
+def _heartbeat_message(event: str) -> dict[str, Any]:
+    return {
+        "event": event,
+        "trace_id": None,
+        "occurred_at": _utc_now_iso(),
+        "payload": {"status": "alive"},
+    }
+
+
 async def _authenticate_websocket(websocket: WebSocket) -> dict[str, str | int]:
     token = websocket.query_params.get("access_token")
     if not token:
@@ -80,15 +91,15 @@ async def _authenticate_websocket(websocket: WebSocket) -> dict[str, str | int]:
 
 @router.websocket("/ws/v1/positions")
 async def stream_positions(websocket: WebSocket) -> None:
+    await websocket.accept()
     try:
         auth_result = await _authenticate_websocket(websocket)
     except WebSocketAuthenticationError:
         return
 
-    await websocket.accept()
-
     previous_state: dict[str, dict] = {}
     initial_snapshot_sent = False
+    last_sent_at = datetime.now(timezone.utc)
 
     try:
         while True:
@@ -127,22 +138,28 @@ async def stream_positions(websocket: WebSocket) -> None:
 
             for message in outbound_messages:
                 await _send_json_or_disconnect(websocket, message)
+                last_sent_at = datetime.now(timezone.utc)
 
-            await _wait_for_disconnect(websocket, timeout_seconds=1.0)
+            seconds_since_last_send = (datetime.now(timezone.utc) - last_sent_at).total_seconds()
+            if seconds_since_last_send >= WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS:
+                await _send_json_or_disconnect(websocket, _heartbeat_message("positions.heartbeat"))
+                last_sent_at = datetime.now(timezone.utc)
+
+            await _wait_for_disconnect(websocket, timeout_seconds=WEBSOCKET_POLL_INTERVAL_SECONDS)
     except WebSocketDisconnect:
         return
 
 
 @router.websocket("/ws/v1/kill-switch")
 async def stream_kill_switch_status(websocket: WebSocket) -> None:
+    await websocket.accept()
     try:
         auth_result = await _authenticate_websocket(websocket)
     except WebSocketAuthenticationError:
         return
 
-    await websocket.accept()
-
     previous_status: dict[str, object | None] | None = None
+    last_sent_at = datetime.now(timezone.utc)
 
     try:
         while True:
@@ -177,7 +194,13 @@ async def stream_kill_switch_status(websocket: WebSocket) -> None:
 
             if outbound_message is not None:
                 await _send_json_or_disconnect(websocket, outbound_message)
+                last_sent_at = datetime.now(timezone.utc)
 
-            await _wait_for_disconnect(websocket, timeout_seconds=1.0)
+            seconds_since_last_send = (datetime.now(timezone.utc) - last_sent_at).total_seconds()
+            if seconds_since_last_send >= WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS:
+                await _send_json_or_disconnect(websocket, _heartbeat_message("kill_switch.heartbeat"))
+                last_sent_at = datetime.now(timezone.utc)
+
+            await _wait_for_disconnect(websocket, timeout_seconds=WEBSOCKET_POLL_INTERVAL_SECONDS)
     except WebSocketDisconnect:
         return

@@ -100,12 +100,13 @@ def test_technical_analysis_engine_sets_neutral_foundation_when_data_enough() ->
     assert result.technical_analysis.metadata.get("mode") == "pattern_evaluation"
 
 
-def test_pipeline_order_places_technical_analysis_after_regime_before_selector() -> None:
+def test_pipeline_order_places_technical_analysis_after_regime_before_market_structure_and_selector() -> None:
     regime_idx = PIPELINE_STEP_ORDER.index("MarketRegimeEngine")
     technical_idx = PIPELINE_STEP_ORDER.index("TechnicalAnalysisEngine")
+    structure_idx = PIPELINE_STEP_ORDER.index("MarketStructureEngine")
     selector_idx = PIPELINE_STEP_ORDER.index("StrategySelector")
 
-    assert regime_idx < technical_idx < selector_idx
+    assert regime_idx < technical_idx < structure_idx < selector_idx
 
 
 def test_technical_analysis_engine_uses_htf_confirmation_when_available() -> None:

@@ -28,12 +28,15 @@ from src.engines import (
     PreTradeSimulation,
     RiskEngine,
     RuntimeStateUpdater,
+    SessionFilter,
     SignalContractBuilder,
+    SignalQualityScorer,
     SignalValidator,
     StrategyEngine,
     StrategyFeedbackLoop,
     StrategySelector,
     TradeJournalEngine,
+    TradeCooldownGuard,
     PerformanceAnalyzer,
 )
 from src.infrastructure.database.session import SessionLocal
@@ -73,6 +76,7 @@ from src.services import (
 )
 from src.trading.technical_analysis.engine import TechnicalAnalysisEngine
 from src.trading.technical_analysis.config import TechnicalAnalysisConfig
+from src.trading.market_structure.engine import MarketStructureEngine
 
 
 def main() -> None:
@@ -222,6 +226,7 @@ def main() -> None:
         ingestion_engine = MarketDataIngestionEngine(market_repo, account_repo, candle_service, account_snapshot_service)
         data_quality = DataQualityGuard(market_repo, candle_service, settings=runtime_settings)
         market_event = MarketEventFilter(market_repo)
+        session_filter = SessionFilter(runtime_settings)
         regime_engine = MarketRegimeEngine(
             regime_repo,
             confirmation_timeframes=settings.context_timeframes,
@@ -231,12 +236,15 @@ def main() -> None:
                 confirmation_timeframes=settings.context_timeframes,
             )
         )
+        market_structure_engine = MarketStructureEngine(settings=runtime_settings)
         strategy_selector = StrategySelector(strategy_repo)
         strategy_engine = StrategyEngine()
         signal_builder = SignalContractBuilder(signal_repo, strategy_repo)
+        signal_quality_scorer = SignalQualityScorer(runtime_settings)
         signal_validator = SignalValidator(signal_repo, position_repo, runtime_settings)
         edge_validator = HistoricalEdgeValidator(signal_repo, runtime_settings)
         risk_engine = RiskEngine(risk_repo, runtime_settings)
+        trade_cooldown_guard = TradeCooldownGuard(signal_repo, runtime_settings)
         pretrade_engine = PreTradeSimulation(risk_repo, runtime_settings)
         broker_health = BrokerHealthCheck(health_client, execution_repo, runtime_settings)
         execution_gate = ExecutionGate(execution_repo, safety_repo, runtime_settings)
@@ -252,14 +260,18 @@ def main() -> None:
                 "MarketDataIngestionEngine": ingestion_engine,
                 "DataQualityGuard": data_quality,
                 "MarketEventFilter": market_event,
+                "SessionFilter": session_filter,
                 "MarketRegimeEngine": regime_engine,
                 "TechnicalAnalysisEngine": technical_analysis_engine,
+                "MarketStructureEngine": market_structure_engine,
                 "StrategySelector": strategy_selector,
                 "StrategyEngine": strategy_engine,
                 "SignalContractBuilder": signal_builder,
+                "SignalQualityScorer": signal_quality_scorer,
                 "SignalValidator": signal_validator,
                 "HistoricalEdgeValidator": edge_validator,
                 "RiskEngine": risk_engine,
+                "TradeCooldownGuard": trade_cooldown_guard,
                 "PreTradeSimulation": pretrade_engine,
                 "BrokerHealthCheck": broker_health,
                 "ExecutionGate": execution_gate,

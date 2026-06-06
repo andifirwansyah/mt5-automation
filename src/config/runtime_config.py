@@ -63,6 +63,66 @@ RUNTIME_CONFIG_SPECS: dict[str, RuntimeConfigSpec] = {
     "feedback_min_trades": RuntimeConfigSpec("feedback_min_trades", "int", "Minimum trades before strategy feedback activates.", minimum=0),
     "feedback_low_win_rate": RuntimeConfigSpec("feedback_low_win_rate", "float", "Low win-rate threshold for feedback.", minimum=0, maximum=1),
     "feedback_high_drawdown": RuntimeConfigSpec("feedback_high_drawdown", "float", "High drawdown threshold for feedback.", minimum=0),
+    "market_structure_override_min_confidence": RuntimeConfigSpec(
+        "market_structure_override_min_confidence",
+        "float",
+        "Minimum signal confidence required to convert soft market-structure issues into warnings.",
+        minimum=0,
+        maximum=1,
+    ),
+    "market_structure_hard_min_room_atr": RuntimeConfigSpec(
+        "market_structure_hard_min_room_atr",
+        "float",
+        "Critical minimum room-to-opposite-zone in ATR before hard reject.",
+        minimum=0,
+    ),
+    "market_structure_soft_min_room_atr": RuntimeConfigSpec(
+        "market_structure_soft_min_room_atr",
+        "float",
+        "Preferred minimum room-to-opposite-zone in ATR before soft warning/reject.",
+        minimum=0,
+    ),
+    "market_structure_zone_tolerance_atr": RuntimeConfigSpec(
+        "market_structure_zone_tolerance_atr",
+        "float",
+        "Support/resistance zone tolerance in ATR.",
+        minimum=0,
+    ),
+    "market_structure_danger_zone_atr": RuntimeConfigSpec(
+        "market_structure_danger_zone_atr",
+        "float",
+        "Distance to opposite support/resistance in ATR considered dangerous.",
+        minimum=0,
+    ),
+    "market_structure_min_candles_required": RuntimeConfigSpec(
+        "market_structure_min_candles_required",
+        "int",
+        "Minimum candles required for market-structure analysis.",
+        minimum=1,
+    ),
+    "session_filter_allowed_sessions": RuntimeConfigSpec(
+        "session_filter_allowed_sessions",
+        "str",
+        "Comma-separated allowed UTC sessions: ASIA,LONDON,NEW_YORK,ROLLOVER.",
+    ),
+    "session_filter_block_rollover": RuntimeConfigSpec(
+        "session_filter_block_rollover",
+        "bool",
+        "Block trading during UTC rollover session.",
+    ),
+    "signal_quality_min_score": RuntimeConfigSpec(
+        "signal_quality_min_score",
+        "float",
+        "Minimum composite signal quality score required before validation.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_cooldown_minutes": RuntimeConfigSpec(
+        "trade_cooldown_minutes",
+        "int",
+        "Cooldown minutes between generated signals for the same symbol/timeframe.",
+        minimum=0,
+    ),
 }
 
 

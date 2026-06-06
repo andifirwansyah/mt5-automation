@@ -106,7 +106,7 @@ def test_performance_summary_counts_closed_positions_without_execution_order(mon
     assert payload["today"]["total_profit"] >= 25.0
 
 
-def test_performance_recalculate_endpoint_populates_summary(monkeypatch) -> None:
+def test_performance_summary_reads_precomputed_performance(monkeypatch) -> None:
     monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
     get_settings.cache_clear()
 
@@ -147,18 +147,16 @@ def test_performance_recalculate_endpoint_populates_summary(monkeypatch) -> None
             details={"source": "pytest-recalc"},
         )
         session.commit()
+
+        analyzer = PerformanceAnalyzer(PerformanceRepository(session))
+        result = analyzer.run_cycle(reference_time=now)
+        assert result["total_trades"] >= 1
+        assert result["net_profit"] >= 40.0
     finally:
         session.close()
 
     client = TestClient(app)
     headers = _login_and_get_auth_headers(client, login_email, login_password)
-
-    recalc_response = client.post("/api/v1/performance/recalculate", headers=headers)
-    assert recalc_response.status_code == 200
-    recalc_payload = recalc_response.json()
-    assert recalc_payload["message"] == "Performance recalculated"
-    assert recalc_payload["result"]["total_trades"] >= 1
-    assert recalc_payload["result"]["net_profit"] >= 40.0
 
     summary_response = client.get("/api/v1/performance/summary", headers=headers)
     assert summary_response.status_code == 200
@@ -167,6 +165,22 @@ def test_performance_recalculate_endpoint_populates_summary(monkeypatch) -> None
     assert summary_payload["overall"]["total_profit"] >= 40.0
     assert summary_payload["overall"]["total_net_profit"] >= 40.0
     assert summary_payload["today"]["total_trades"] >= 1
+
+
+def test_performance_recalculate_endpoint_is_not_available(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
+    get_settings.cache_clear()
+
+    login_email = f"dashboard.user.{uuid.uuid4().hex[:10]}@example.com"
+    login_password = "Pass123."
+    _create_dashboard_user(login_email, login_password)
+
+    client = TestClient(app)
+    headers = _login_and_get_auth_headers(client, login_email, login_password)
+
+    response = client.post("/api/v1/performance/recalculate", headers=headers)
+
+    assert response.status_code == 404
 
 
 def test_performance_recalculate_backfills_profit_from_position_details(monkeypatch) -> None:

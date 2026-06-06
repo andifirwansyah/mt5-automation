@@ -42,6 +42,8 @@ from src.repositories.strategy_repository import StrategyRepository
 from src.services.account_snapshot_service import AccountSnapshotService
 from src.services.candle_service import CandleService
 from src.services.engine_audit_service import EngineAuditService
+from src.trading.market_structure.config import MarketStructureConfig
+from src.trading.market_structure.engine import MarketStructureEngine
 
 
 def _build_rates_dataframe(count: int = 80, start_price: float = 2200.0):
@@ -247,6 +249,7 @@ def test_e2e_dry_run_orchestrator_pipeline(db_session, unique_suffix: str) -> No
         DataQualityGuard(market_repository=market_repo, candle_service=candle_service),
         MarketEventFilter(market_repository=market_repo),
         MarketRegimeEngine(regime_repository=regime_repo),
+        MarketStructureEngine(config=MarketStructureConfig(min_candles_required=20, swing_left_bars=1, swing_right_bars=1)),
         StrategySelector(strategy_repository=strategy_repo),
         StrategyEngine(),
         SignalContractBuilder(signal_repository=signal_repo, strategy_repository=strategy_repo),

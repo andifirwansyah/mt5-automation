@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from src.config.settings import AppSettings, get_settings
+from src.domain.enums import SignalDirection
 from src.domain.models.risk_plan import RiskPlan
 from src.pipeline.pipeline_step import PipelineStep
 from src.pipeline.trading_context import TradingContext
@@ -77,6 +78,30 @@ class RiskEngine(PipelineStep):
             else:
                 sl = entry + (1.5 * atr)
                 tp = entry - (2.0 * atr)
+
+        if contract.direction == SignalDirection.BUY and not (sl < entry < tp):
+            context.reject(
+                "RISK_FAILED",
+                {
+                    "message": "BUY requires stop_loss < entry_price < take_profit",
+                    "entry_price": entry,
+                    "stop_loss": sl,
+                    "take_profit": tp,
+                },
+            )
+            return context
+
+        if contract.direction == SignalDirection.SELL and not (tp < entry < sl):
+            context.reject(
+                "RISK_FAILED",
+                {
+                    "message": "SELL requires take_profit < entry_price < stop_loss",
+                    "entry_price": entry,
+                    "stop_loss": sl,
+                    "take_profit": tp,
+                },
+            )
+            return context
 
         risk_distance = abs(entry - sl)
         reward_distance = abs(tp - entry)

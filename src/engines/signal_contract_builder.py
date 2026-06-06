@@ -73,6 +73,13 @@ class SignalContractBuilder(PipelineStep):
             "setup_signature": setup_signature,
         }
 
+    @staticmethod
+    def _build_market_structure_summary(context: TradingContext) -> dict:
+        structure = context.market_structure
+        if structure is None:
+            return {}
+        return structure.to_summary()
+
     def run(self, context: TradingContext) -> TradingContext:
         if context.raw_signal is None or context.strategy_selection is None:
             context.reject("NO_RAW_SIGNAL", {"message": "raw_signal and strategy_selection are required"})
@@ -82,6 +89,7 @@ class SignalContractBuilder(PipelineStep):
         strategy_code = context.strategy_selection.strategy_code
         lot_size = float(context.strategy_selection.config.get("lot_size", self.default_lot_size))
         technical_summary = self._build_technical_summary(context)
+        market_structure_summary = self._build_market_structure_summary(context)
 
         contract = SignalContract(
             symbol=context.symbol,
@@ -100,6 +108,7 @@ class SignalContractBuilder(PipelineStep):
                 "reason": context.strategy_selection.reason,
                 "features": raw.features,
                 "technical_summary": technical_summary,
+                "market_structure_summary": market_structure_summary,
                 "setup_signature": technical_summary.get("setup_signature"),
             },
         )
@@ -141,6 +150,7 @@ class SignalContractBuilder(PipelineStep):
                 "entry_type": "MARKET",
                 "metadata": raw.metadata,
                 "technical_summary": technical_summary,
+                "market_structure_summary": market_structure_summary,
                 "setup_signature": technical_summary.get("setup_signature"),
             },
         )

@@ -131,3 +131,19 @@ class SignalRepository:
         if exclude_signal_id is not None:
             stmt = stmt.where(Signal.id != exclude_signal_id)
         return int(self.session.execute(stmt).scalar_one())
+
+    def count_recent_signals(
+        self,
+        symbol_id: uuid.UUID,
+        timeframe_id: uuid.UUID,
+        since: datetime,
+        exclude_signal_id: uuid.UUID | None = None,
+    ) -> int:
+        stmt = select(func.count(Signal.id)).where(
+            Signal.symbol_id == symbol_id,
+            Signal.timeframe_id == timeframe_id,
+            Signal.signal_time >= since,
+        )
+        if exclude_signal_id is not None:
+            stmt = stmt.where(Signal.id != exclude_signal_id)
+        return int(self.session.execute(stmt).scalar_one())

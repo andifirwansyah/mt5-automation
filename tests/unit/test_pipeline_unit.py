@@ -728,6 +728,39 @@ def test_risk_engine_requires_sl_and_tp() -> None:
     assert result.rejection_reason == "RISK_FAILED"
 
 
+def test_risk_engine_rejects_inverted_buy_sl_tp() -> None:
+    class RiskRepo:
+        def __init__(self) -> None:
+            self.session = DummySession()
+
+        @staticmethod
+        def create_risk_assessment(**_kwargs):
+            return None
+
+    context = _context()
+    context.signal_contract = SignalContract(
+        symbol="XAUUSD",
+        timeframe="M5",
+        direction=SignalDirection.BUY,
+        entry_price=2300.0,
+        stop_loss=2302.0,
+        take_profit=2305.0,
+        lot_size=0.1,
+        confidence=0.8,
+        generated_at=context.candle_time,
+        strategy_code="EMA_ATR_TREND",
+        metadata={"signal_id": str(uuid.uuid4())},
+    )
+    context.ingestion_result = {"account_info": {"equity": 10000.0}, "symbol_info": {"trade_contract_size": 100.0}}
+    context.regime_result = RegimeResult(regime=MarketRegimeType.TRENDING_BULLISH, confidence=0.8, is_tradeable=True, features={})
+
+    result = RiskEngine(risk_repository=RiskRepo()).run(context)
+
+    assert result.rejected is True
+    assert result.rejection_reason == "RISK_FAILED"
+    assert "BUY requires" in result.rejection_details["message"]
+
+
 def test_execution_gate_rejects_when_broker_unhealthy() -> None:
     class ExecutionRepo:
         def __init__(self) -> None:

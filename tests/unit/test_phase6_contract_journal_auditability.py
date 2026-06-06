@@ -15,6 +15,7 @@ from src.engines.signal_validator import SignalValidator
 from src.engines.trade_journal_engine import TradeJournalEngine
 from src.pipeline.trading_context import TradingContext
 from src.trading.technical_analysis.models import PatternEvidence, TechnicalAnalysisResult
+from src.trading.market_structure.models import MarketStructureResult
 
 
 def _context() -> TradingContext:
@@ -121,6 +122,9 @@ def test_signal_validator_soft_conflict_adds_warning_not_reject() -> None:
         {
             "direction": SignalDirection.BUY,
             "entry_price": 2300.0,
+            "stop_loss": 2298.0,
+            "take_profit": 2304.0,
+            "confidence": 0.7,
             "generated_at": ctx.candle_time,
             "strategy_code": "EMA_ATR_TREND",
             "metadata": {
@@ -134,6 +138,21 @@ def test_signal_validator_soft_conflict_adds_warning_not_reject() -> None:
             },
         },
     )()
+    ctx.market_structure = MarketStructureResult(
+        symbol="XAUUSD",
+        timeframe="M5",
+        trend_structure="BULLISH",
+        current_price=2300.0,
+        atr=1.0,
+        nearest_support=2295.0,
+        nearest_resistance=2305.0,
+        distance_to_support_points=5.0,
+        distance_to_resistance_points=5.0,
+        is_near_support=False,
+        is_near_resistance=False,
+        valid_buy_zone=True,
+        valid_sell_zone=False,
+    )
 
     out = SignalValidator(signal_repository=SigRepo(), position_repository=PosRepo(), settings=settings).run(ctx)
     assert out.rejected is False

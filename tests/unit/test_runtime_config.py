@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.config.runtime_config import RuntimeSettingsProxy
+from src.config.runtime_config import RUNTIME_CONFIG_SPECS, coerce_runtime_config_value
 from src.config.settings import get_settings
 from src.infrastructure.database.session import SessionLocal
 from src.repositories.runtime_config_repository import RuntimeConfigRepository
@@ -47,3 +48,14 @@ def test_runtime_settings_proxy_reads_db_update_without_recreating_proxy() -> No
         restore_session.commit()
     finally:
         restore_session.close()
+
+
+def test_market_structure_runtime_config_specs_are_registered() -> None:
+    assert "market_structure_override_min_confidence" in RUNTIME_CONFIG_SPECS
+    assert "market_structure_hard_min_room_atr" in RUNTIME_CONFIG_SPECS
+    assert "market_structure_soft_min_room_atr" in RUNTIME_CONFIG_SPECS
+    assert "market_structure_zone_tolerance_atr" in RUNTIME_CONFIG_SPECS
+    assert "market_structure_danger_zone_atr" in RUNTIME_CONFIG_SPECS
+    assert "market_structure_min_candles_required" in RUNTIME_CONFIG_SPECS
+    assert coerce_runtime_config_value("market_structure_override_min_confidence", "0.72") == 0.72
+    assert coerce_runtime_config_value("market_structure_min_candles_required", "50") == 50
