@@ -4,6 +4,7 @@ from src.schemas.common import MessageResponse, PaginatedResponse
 from src.schemas.health import HealthResponse
 from src.schemas.runtime_config import RuntimeConfigUpdatePayload
 from src.schemas.auth import UserLoginRequest, UserLoginResponse
+from src.schemas.strategy_config import StrategyConfigUpdatePayload
 
 __all__ = [
     "HealthResponse",
@@ -12,4 +13,5 @@ __all__ = [
     "UserLoginRequest",
     "UserLoginResponse",
     "RuntimeConfigUpdatePayload",
+    "StrategyConfigUpdatePayload",
 ]

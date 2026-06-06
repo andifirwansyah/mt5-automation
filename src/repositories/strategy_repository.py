@@ -36,6 +36,26 @@ class StrategyRepository:
             stmt = stmt.where((StrategyConfig.timeframe_id == timeframe_id) | (StrategyConfig.timeframe_id.is_(None)))
         return list(self.session.execute(stmt).scalars().all())
 
+    def get_strategy_config_by_id(self, config_id: uuid.UUID) -> StrategyConfig | None:
+        stmt = select(StrategyConfig).where(StrategyConfig.id == config_id)
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def update_strategy_config(
+        self,
+        config_id: uuid.UUID,
+        config: dict[str, Any] | None = None,
+        is_active: bool | None = None,
+    ) -> StrategyConfig | None:
+        entity = self.get_strategy_config_by_id(config_id)
+        if entity is None:
+            return None
+        if config is not None:
+            entity.config = dict(config)
+        if is_active is not None:
+            entity.is_active = is_active
+        self.session.flush()
+        return entity
+
     def create_strategy_selection(
         self,
         trace_id: uuid.UUID,

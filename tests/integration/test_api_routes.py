@@ -9,12 +9,13 @@ from fastapi.testclient import TestClient
 
 from src.api.main import app
 from src.config.settings import get_settings
+from src.infrastructure.database.models import Strategy, StrategyConfig
+from src.infrastructure.database.session import SessionLocal
 from src.repositories.auth_repository import AuthRepository
 from src.repositories.account_repository import AccountRepository
 from src.repositories.market_repository import MarketRepository
 from src.repositories.position_repository import PositionRepository
 from src.repositories.safety_repository import SafetyRepository
-from src.infrastructure.database.session import SessionLocal
 from src.services.runtime_config_service import RuntimeConfigService
 from src.services.password_hasher_service import hash_password
 
@@ -214,6 +215,67 @@ def test_runtime_config_update_api(monkeypatch) -> None:
             updated_by="pytest",
             update_reason="restore after api test",
         )
+        get_settings.cache_clear()
+
+
+def test_strategy_config_update_api(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
+    get_settings.cache_clear()
+
+    login_email = f"dashboard.user.{uuid.uuid4().hex[:10]}@example.com"
+    login_password = "Pass123."
+    _create_dashboard_user(login_email, login_password)
+
+    session = SessionLocal()
+    try:
+        strategy = Strategy(
+            code=f"PYTEST_STRATEGY_{uuid.uuid4().hex[:8]}",
+            name="Pytest Strategy",
+            description="Created by API test",
+            is_active=True,
+            metadata_json={"source": "pytest"},
+        )
+        session.add(strategy)
+        session.flush()
+        strategy_config = StrategyConfig(
+            strategy_id=strategy.id,
+            config={"lot_size": 0.01, "max_spread": 30},
+            is_active=True,
+        )
+        session.add(strategy_config)
+        session.commit()
+        config_id = strategy_config.id
+    finally:
+        session.close()
+
+    try:
+        client = TestClient(app)
+        headers = _login_and_get_auth_headers(client, login_email, login_password)
+        response = client.put(
+            f"/api/v1/strategies/configs/{config_id}",
+            json={
+                "config": {"lot_size": 0.02, "max_spread": 25},
+                "is_active": False,
+                "actor": "pytest",
+                "reason": "api update test",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200
+        payload = response.json()["config"]
+        assert payload["id"] == str(config_id)
+        assert payload["config"] == {"lot_size": 0.02, "max_spread": 25}
+        assert payload["is_active"] is False
+
+        verify_session = SessionLocal()
+        try:
+            updated = verify_session.get(StrategyConfig, config_id)
+            assert updated is not None
+            assert updated.config == {"lot_size": 0.02, "max_spread": 25}
+            assert updated.is_active is False
+        finally:
+            verify_session.close()
+    finally:
         get_settings.cache_clear()
 
 
