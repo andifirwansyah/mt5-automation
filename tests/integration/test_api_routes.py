@@ -218,6 +218,59 @@ def test_runtime_config_update_api(monkeypatch) -> None:
         get_settings.cache_clear()
 
 
+def test_get_strategies_includes_configs_and_configs_list_endpoint_removed(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
+    get_settings.cache_clear()
+
+    login_email = f"dashboard.user.{uuid.uuid4().hex[:10]}@example.com"
+    login_password = "Pass123."
+    _create_dashboard_user(login_email, login_password)
+
+    session = SessionLocal()
+    try:
+        strategy = Strategy(
+            code=f"PYTEST_CONFIGURED_STRATEGY_{uuid.uuid4().hex[:8]}",
+            name="Pytest Configured Strategy",
+            description="Created by API config payload test",
+            is_active=True,
+            metadata_json={"source": "pytest"},
+        )
+        session.add(strategy)
+        session.flush()
+        strategy_config = StrategyConfig(
+            strategy_id=strategy.id,
+            config={"lot_size": 0.01, "max_spread": 30},
+            is_active=True,
+        )
+        session.add(strategy_config)
+        session.commit()
+        strategy_id = strategy.id
+        config_id = strategy_config.id
+    finally:
+        session.close()
+
+    try:
+        client = TestClient(app)
+        headers = _login_and_get_auth_headers(client, login_email, login_password)
+
+        response = client.get("/api/v1/strategies?limit=1000", headers=headers)
+        assert response.status_code == 200
+        payload = response.json()
+        strategy_payload = next(item for item in payload["items"] if item["id"] == str(strategy_id))
+        assert "configs" in strategy_payload
+        assert len(strategy_payload["configs"]) == 1
+        config_payload = strategy_payload["configs"][0]
+        assert config_payload["id"] == str(config_id)
+        assert config_payload["strategy_id"] == str(strategy_id)
+        assert config_payload["config"] == {"lot_size": 0.01, "max_spread": 30}
+        assert config_payload["is_active"] is True
+
+        configs_response = client.get("/api/v1/strategies/configs", headers=headers)
+        assert configs_response.status_code == 404
+    finally:
+        get_settings.cache_clear()
+
+
 def test_strategy_config_update_api(monkeypatch) -> None:
     monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
     get_settings.cache_clear()
