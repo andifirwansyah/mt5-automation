@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_db, model_to_dict, pagination_params
+from src.api.deps import get_db, model_to_dict, pagination_params, serialize_value
 from src.infrastructure.database.models import (
     ExecutionDecision,
     ExecutionOrder,
@@ -19,6 +20,45 @@ from src.infrastructure.database.models import (
 )
 
 router = APIRouter(prefix="/api/v1/signals", tags=["signals"])
+
+VALID_SIGNAL_STATUSES = {
+    "PENDING_EXECUTION_DECISION",
+    "PENDING_MANUAL_APPROVAL",
+    "APPROVED",
+    "DRY_RUN_APPROVED",
+    "ORDER_CREATED",
+    "ORDER_SUBMITTED",
+    "ORDER_FILLED",
+    "DRY_RUN",
+}
+
+REJECTED_SIGNAL_STATUSES = {
+    "REJECTED",
+    "ORDER_REJECTED",
+}
+
+EXECUTION_READY_STATUSES = {
+    "APPROVED",
+    "DRY_RUN_APPROVED",
+    "PENDING_MANUAL_APPROVAL",
+}
+
+
+def _resolve_signal_time_range(
+    *,
+    signal_date: date | None,
+    start_time: datetime | None,
+    end_time: datetime | None,
+) -> tuple[datetime | None, datetime | None]:
+    if signal_date is not None:
+        start_dt = datetime.combine(signal_date, time.min, tzinfo=timezone.utc)
+        end_dt = start_dt + timedelta(days=1)
+        return start_dt, end_dt
+
+    if start_time is not None and end_time is not None:
+        return start_time, end_time
+
+    return None, None
 
 
 def _latest_by_signal_id(rows: list[Any], *, signal_attr: str = "signal_id") -> dict[uuid.UUID, Any]:
@@ -147,6 +187,62 @@ def _enrich_signals(db: Session, signals: list[Signal]) -> list[dict[str, Any]]:
         )
         for signal in signals
     ]
+
+
+@router.get("/summary")
+def get_signal_summary(
+    signal_date: date | None = Query(default=None),
+    start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    range_start, range_end = _resolve_signal_time_range(
+        signal_date=signal_date,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    if range_start is not None and range_end is not None and range_start >= range_end:
+        return {
+            "range": {
+                "start_time": serialize_value(range_start),
+                "end_time": serialize_value(range_end),
+            },
+            "cards": {
+                "total_signals": 0,
+                "valid_signals": 0,
+                "rejected_signals": 0,
+                "execution_ready": 0,
+            },
+        }
+
+    stmt = select(Signal).order_by(Signal.signal_time.desc())
+    if range_start is not None:
+        stmt = stmt.where(Signal.signal_time >= range_start)
+    if range_end is not None:
+        stmt = stmt.where(Signal.signal_time < range_end)
+    signals = db.execute(stmt).scalars().all()
+    enriched_signals = _enrich_signals(db, list(signals))
+
+    final_statuses = [
+        ((item.get("decision_summary") or {}).get("final_status"))
+        for item in enriched_signals
+    ]
+    valid_count = sum(1 for status in final_statuses if status in VALID_SIGNAL_STATUSES)
+    rejected_count = sum(1 for status in final_statuses if status in REJECTED_SIGNAL_STATUSES)
+    execution_ready_count = sum(1 for status in final_statuses if status in EXECUTION_READY_STATUSES)
+
+    return {
+        "range": {
+            "start_time": serialize_value(range_start),
+            "end_time": serialize_value(range_end),
+        },
+        "cards": {
+            "total_signals": len(enriched_signals),
+            "valid_signals": valid_count,
+            "rejected_signals": rejected_count,
+            "execution_ready": execution_ready_count,
+        },
+    }
 
 
 @router.get("/latest")
