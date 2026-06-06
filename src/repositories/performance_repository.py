@@ -96,6 +96,68 @@ class PerformanceRepository:
         self.session.flush()
         return entity
 
+    def upsert_performance_by_strategy(
+        self,
+        strategy_id: uuid.UUID,
+        period_start: date,
+        period_end: date,
+        total_trades: int,
+        win_rate: float,
+        net_profit: float,
+        profit_factor: float,
+        account_id: uuid.UUID | None = None,
+        symbol_id: uuid.UUID | None = None,
+        timeframe_id: uuid.UUID | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> PerformanceByStrategy:
+        """Upsert strategy performance for one strategy/account/symbol/timeframe period."""
+
+        stmt = select(PerformanceByStrategy).where(
+            PerformanceByStrategy.strategy_id == strategy_id,
+            PerformanceByStrategy.period_start == period_start,
+            PerformanceByStrategy.period_end == period_end,
+        )
+        if account_id is None:
+            stmt = stmt.where(PerformanceByStrategy.account_id.is_(None))
+        else:
+            stmt = stmt.where(PerformanceByStrategy.account_id == account_id)
+
+        candidates = list(self.session.execute(stmt).scalars().all())
+        symbol_key = str(symbol_id) if symbol_id is not None else None
+        timeframe_key = str(timeframe_id) if timeframe_id is not None else None
+        entity = next(
+            (
+                row
+                for row in candidates
+                if (row.details or {}).get("symbol_id") == symbol_key
+                and (row.details or {}).get("timeframe_id") == timeframe_key
+            ),
+            None,
+        )
+
+        if entity is None:
+            entity = PerformanceByStrategy(
+                strategy_id=strategy_id,
+                account_id=account_id,
+                period_start=period_start,
+                period_end=period_end,
+                total_trades=total_trades,
+                win_rate=win_rate,
+                net_profit=net_profit,
+                profit_factor=profit_factor,
+                details=details or {},
+            )
+        else:
+            entity.total_trades = total_trades
+            entity.win_rate = win_rate
+            entity.net_profit = net_profit
+            entity.profit_factor = profit_factor
+            entity.details = details or entity.details
+
+        self.session.add(entity)
+        self.session.flush()
+        return entity
+
     def create_strategy_feedback_event(
         self,
         strategy_id: uuid.UUID,

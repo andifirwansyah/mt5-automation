@@ -126,6 +126,84 @@ class PerformanceAnalyzer:
                 },
             )
 
+    def _upsert_strategy_performance_history(
+        self,
+        now: datetime,
+        normalized_profit_map: dict[uuid.UUID, float],
+    ) -> list[object]:
+        """Backfill strategy performance for all closed positions with signal attribution."""
+
+        session = self.performance_repository.session
+        rows = session.execute(
+            select(
+                Position.id,
+                Position.account_id,
+                Position.profit,
+                Position.symbol_id,
+                Position.closed_at,
+                Signal.strategy_id,
+                Signal.timeframe_id,
+                Signal.entry_price,
+                Signal.stop_loss,
+                Signal.take_profit,
+            )
+            .join(ExecutionOrder, ExecutionOrder.id == Position.execution_order_id)
+            .join(Signal, Signal.id == ExecutionOrder.signal_id)
+            .where(and_(Position.status == "CLOSED", Position.closed_at.is_not(None), Position.closed_at <= now))
+        ).all()
+
+        grouped: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, date], list[tuple[float, float]]] = defaultdict(list)
+        for row in rows:
+            if row.closed_at is None:
+                continue
+
+            trade_date = row.closed_at.astimezone(timezone.utc).date()
+            key = (row.account_id, row.strategy_id, row.symbol_id, row.timeframe_id, trade_date)
+            entry = float(row.entry_price or 0.0)
+            sl = float(row.stop_loss or 0.0)
+            tp = float(row.take_profit or 0.0)
+            risk = abs(entry - sl)
+            rr = abs(tp - entry) / risk if risk > 0 else 0.0
+            grouped[key].append((normalized_profit_map.get(row.id, float(row.profit or 0.0)), rr))
+
+        for (account_id, strategy_id, symbol_id, timeframe_id, trade_date), items in grouped.items():
+            strategy_profits = [profit for profit, _ in items]
+            strategy_wins = [profit for profit in strategy_profits if profit > 0]
+            strategy_losses = [profit for profit in strategy_profits if profit < 0]
+
+            total = len(strategy_profits)
+            gross_profit = sum(strategy_wins)
+            gross_loss = sum(strategy_losses)
+            net_profit = gross_profit + gross_loss
+            profit_factor = (
+                self._safe_div(gross_profit, abs(gross_loss))
+                if gross_loss != 0
+                else (gross_profit if gross_profit > 0 else 0.0)
+            )
+            average_rr = self._safe_div(sum(rr for _, rr in items), len(items))
+
+            self.performance_repository.upsert_performance_by_strategy(
+                strategy_id=strategy_id,
+                account_id=account_id,
+                symbol_id=symbol_id,
+                timeframe_id=timeframe_id,
+                period_start=trade_date,
+                period_end=trade_date,
+                total_trades=total,
+                win_rate=self._safe_div(len(strategy_wins), total),
+                net_profit=net_profit,
+                profit_factor=profit_factor,
+                details={
+                    "symbol_id": str(symbol_id),
+                    "timeframe_id": str(timeframe_id),
+                    "gross_profit": gross_profit,
+                    "gross_loss": gross_loss,
+                    "average_rr": average_rr,
+                },
+            )
+
+        return rows
+
     def run_cycle(self, reference_time: datetime | None = None) -> dict[str, float | int]:
         now = reference_time or self._utc_now()
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -133,6 +211,7 @@ class PerformanceAnalyzer:
         session = self.performance_repository.session
         all_closed_positions, normalized_profit_map = self._normalize_all_closed_positions(now)
         self._upsert_daily_performance_history(all_closed_positions, normalized_profit_map)
+        strategy_rows = self._upsert_strategy_performance_history(now, normalized_profit_map)
 
         summary_positions = list(
             session.execute(
@@ -156,25 +235,10 @@ class PerformanceAnalyzer:
         average_win = self._safe_div(gross_profit, winning_trades)
         average_loss = self._safe_div(gross_loss, losing_trades)
 
-        rows = session.execute(
-            select(
-                Position.id,
-                Position.account_id,
-                Position.profit,
-                Position.symbol_id,
-                Signal.strategy_id,
-                Signal.timeframe_id,
-                Signal.entry_price,
-                Signal.stop_loss,
-                Signal.take_profit,
-            )
-            .join(ExecutionOrder, ExecutionOrder.id == Position.execution_order_id)
-            .join(Signal, Signal.id == ExecutionOrder.signal_id)
-            .where(and_(Position.status == "CLOSED", Position.closed_at >= day_start, Position.closed_at <= now))
-        ).all()
-
         rr_values: list[float] = []
-        for r in rows:
+        for r in strategy_rows:
+            if r.closed_at is None or r.closed_at < day_start or r.closed_at > now:
+                continue
             entry = float(r.entry_price or 0.0)
             sl = float(r.stop_loss or 0.0)
             tp = float(r.take_profit or 0.0)
@@ -196,51 +260,6 @@ class PerformanceAnalyzer:
             details["average_rr"] = average_rr
             account_daily.details = details
             self.performance_repository.session.add(account_daily)
-
-        # performance_by_strategy aggregation per strategy+symbol+timeframe
-        grouped: dict[tuple[uuid.UUID, uuid.UUID, uuid.UUID], list[tuple[float, float]]] = defaultdict(list)
-        for r in rows:
-            key = (r.strategy_id, r.symbol_id, r.timeframe_id)
-            entry = float(r.entry_price or 0.0)
-            sl = float(r.stop_loss or 0.0)
-            tp = float(r.take_profit or 0.0)
-            rr = 0.0
-            risk = abs(entry - sl)
-            if risk > 0:
-                rr = abs(tp - entry) / risk
-            grouped[key].append((normalized_profit_map.get(r.id, float(r.profit or 0.0)), rr))
-
-        for (strategy_id, symbol_id, timeframe_id), items in grouped.items():
-            strategy_profits = [p for p, _ in items]
-            strategy_wins = [p for p in strategy_profits if p > 0]
-            strategy_losses = [p for p in strategy_profits if p < 0]
-
-            total = len(strategy_profits)
-            win_rate_s = self._safe_div(len(strategy_wins), total)
-            gross_profit_s = sum(strategy_wins)
-            gross_loss_s = sum(strategy_losses)
-            net_profit_s = gross_profit_s + gross_loss_s
-            profit_factor_s = self._safe_div(gross_profit_s, abs(gross_loss_s)) if gross_loss_s != 0 else (gross_profit_s if gross_profit_s > 0 else 0.0)
-
-            avg_rr_s = self._safe_div(sum(rr for _, rr in items), len(items))
-
-            self.performance_repository.create_performance_by_strategy(
-                strategy_id=strategy_id,
-                account_id=None,
-                period_start=day_start.date(),
-                period_end=now.date(),
-                total_trades=total,
-                win_rate=win_rate_s,
-                net_profit=net_profit_s,
-                profit_factor=profit_factor_s,
-                details={
-                    "symbol_id": str(symbol_id),
-                    "timeframe_id": str(timeframe_id),
-                    "gross_profit": gross_profit_s,
-                    "gross_loss": gross_loss_s,
-                    "average_rr": avg_rr_s,
-                },
-            )
 
         self.performance_repository.session.commit()
 
