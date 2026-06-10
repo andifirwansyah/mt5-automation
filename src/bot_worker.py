@@ -73,6 +73,7 @@ from src.services import (
     RuntimeConfigService,
     RuntimeStateService,
     TradeLifecycleService,
+    TradeManagementService,
 )
 from src.trading.technical_analysis.engine import TechnicalAnalysisEngine
 from src.trading.technical_analysis.config import TechnicalAnalysisConfig
@@ -290,7 +291,13 @@ def main() -> None:
             rejection_journal_service=rejection_journal_service,
         )
 
-        position_orchestrator = PositionOrchestrator(position_sync_service, trade_lifecycle_service, position_repo)
+        trade_management_service = TradeManagementService(order_executor, runtime_settings)
+        position_orchestrator = PositionOrchestrator(
+            position_sync_service,
+            trade_lifecycle_service,
+            position_repo,
+            trade_management_service=trade_management_service,
+        )
 
         perf_repo = PerformanceRepository(performance_session)
         performance_orchestrator = PerformanceOrchestrator(
@@ -305,8 +312,11 @@ def main() -> None:
             trading_orchestrator.run_cycle(candle_event)
 
         def on_tick(_tick: dict) -> None:
+            live_positions = position_client.get_open_positions(symbol=settings.trading_symbol)
+            trade_management_service.manage_positions(live_positions)
+
             now = time.time()
-            if now - last_position_sync["ts"] < settings.position_sync_interval_seconds:
+            if now - last_position_sync["ts"] < runtime_settings.position_sync_interval_seconds:
                 return
             last_position_sync["ts"] = now
             position_orchestrator.run_cycle(account_id=trading_account.id)

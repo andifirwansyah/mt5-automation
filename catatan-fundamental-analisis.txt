@@ -1,0 +1,54 @@
+Konsep dulu: "fundamental" di sistem kamu masuk di 2 peran berbeda
+
+Pipeline kamu (PIPELINE_STEP_ORDER) itu campuran gate (boleh trade / tidak) dan scorer (seberapa bagus). Fundamental bisa main di dua-duanya:
+
+┌────────────────┬────────────────────────────────────────────────────────────────────┬────────────────────────────────┬──────────────────────────────────────────┐
+│     Peran      │                         Contoh fundamental                         │       Posisi di pipeline       │         Pola engine yang ditiru          │
+├────────────────┼────────────────────────────────────────────────────────────────────┼────────────────────────────────┼──────────────────────────────────────────┤
+│ Gate / filter  │ Jangan trade 30 menit sebelum NFP/FOMC, atau saat sentimen ekstrem │ sebelum strategi jalan         │ MarketEventFilter                        │
+├────────────────┼────────────────────────────────────────────────────────────────────┼────────────────────────────────┼──────────────────────────────────────────┤
+│ Bias / scoring │ Bias makro bullish USD → kurangi skor sinyal SELL USD              │ sebelum/di SignalQualityScorer │ MarketRegimeEngine → SignalQualityScorer │
+└────────────────┴────────────────────────────────────────────────────────────────────┴────────────────────────────────┴──────────────────────────────────────────┘
+
+Yang penting: kamu sudah punya fondasi gate fundamental — tabel MarketEvent + engine MarketEventFilter (market_event_filter.py:55) sudah memblokir high-impact event dari economic calendar. Jadi pertanyaannya lebih ke "mau seberapa jauh".
+
+Rekomendasi: tambah FundamentalAnalysisEngine sebagai scorer, bukan gate
+
+Gate fundamental sudah dicover MarketEventFilter. Yang biasanya kurang dan paling bernilai adalah bias makro yang ikut menimbang kualitas sinyal. Jadi aku sarankan engine baru yang menghasilkan "fundamental bias" lalu di-feed ke SignalQualityScorer, mirip cara technical_analysis dan market_structure sekarang dipakai di scorer (signal_quality_scorer.py:50-76).
+
+Langkah konkret
+
+1. Domain model baru — src/domain/models/fundamental_result.py
+FundamentalResult: bias ("buy"/"sell"/"neutral"), score (0..1),
+                   confidence, drivers: list[str], details: dict
+Daftarkan di src/domain/models/__init__.py, dan tambahkan field fundamental: FundamentalResult | None = None di TradingContext (trading_context.py:43 area).
+
+2. Engine baru — src/engines/fundamental_analysis_engine.py, implement PipelineStep:
+class FundamentalAnalysisEngine(PipelineStep):
+    name = "FundamentalAnalysisEngine"
+    def run(self, context):
+        # baca data fundamental (lihat poin sumber data di bawah)
+        # hitung bias makro untuk context.symbol
+        context.fundamental = FundamentalResult(...)
+        return context  # scorer/non-blocking → JANGAN context.reject() di sini
+
+3. Masukkan ke urutan pipeline (trading_pipeline.py:11). Taruh setelah MarketRegimeEngine, sebelum StrategySelector — supaya bias fundamental tersedia sebelum sinyal dibentuk:
+"MarketRegimeEngine",
+"FundamentalAnalysisEngine",   # <-- baru
+"TechnicalAnalysisEngine",
+
+4. Wire di bot_worker.py (sekitar :228–:282), bikin instance + tambahkan ke dict build_trading_pipeline.
+
+5. Pakai di scorer (signal_quality_scorer.py) — tambah fundamental_score ke kombinasi berbobot di :95, dan rebalance bobotnya (sekarang total 1.0: 0.30/0.25/0.25/0.15/0.05). Mis. potong technical jadi 0.20 dan kasih fundamental 0.10, plus warning FUNDAMENTAL_BIAS_CONFLICT kalau arah sinyal lawan bias makro — persis pola TECHNICAL_BIAS_CONFLICT yang sudah ada.
+
+6. Persistence (opsional tapi konsisten) — kalau mau audit, tambah tabel fundamental_snapshots lewat Alembic migration (alembic/versions/), mirip MarketEvent. Plus runtime config di seed_runtime_configs.py buat toggle on/off dan bobotnya.
+
+Yang perlu kamu putuskan — sumber data & makna "fundamental"
+
+Ini bagian yang menentukan desain, dan aku belum tahu maksudmu yang mana. Pertanyaan dari aku:
+
+- Instrumen apa? Kodenya berbasis MT5/forex (trading_symbol, spread, pips). Fundamental forex = kalender ekonomi, suku bunga, rate differential, COT, sentimen. Kalau saham, beda lagi (earnings, valuasi).
+- Sumber data dari mana? Economic calendar API (ForexFactory, Finnhub, Trading Economics), news/sentiment API, atau input manual? Ini nentuin apakah butuh engine ingestion baru / scheduled job (kamu sudah punya pola service di src/services/ dan orchestrator periodik).
+- Realtime atau batch? Bias makro biasanya gak berubah tiap candle — lebih cocok di-refresh periodik (mirip PerformanceOrchestrator.start(interval_seconds=...)) dan engine pipeline tinggal baca hasil cache-nya, biar gak lambat di hot path per-candle.
+
+Mau aku buatkan implementasi skeleton-nya (model + engine + wiring + hook ke scorer, non-blocking, dengan data fundamental masih di-stub) supaya tinggal kamu isi sumber datanya? Atau kamu cerita dulu sumber data & instrumennya biar aku langsung bikin yang nyambung ke situ?

@@ -78,11 +78,26 @@ class AppSettings(BaseSettings):
     session_filter_block_rollover: bool = Field(default=True, alias="SESSION_FILTER_BLOCK_ROLLOVER")
     signal_quality_min_score: float = Field(default=0.45, alias="SIGNAL_QUALITY_MIN_SCORE")
     trade_cooldown_minutes: int = Field(default=10, alias="TRADE_COOLDOWN_MINUTES")
+    trade_management_enabled: bool = Field(default=True, alias="TRADE_MANAGEMENT_ENABLED")
+    trade_management_breakeven_trigger_ratio: float = Field(default=0.60, alias="TRADE_MANAGEMENT_BREAKEVEN_TRIGGER_RATIO")
+    trade_management_breakeven_buffer_ratio: float = Field(default=0.05, alias="TRADE_MANAGEMENT_BREAKEVEN_BUFFER_RATIO")
+    trade_management_trailing_enabled: bool = Field(default=True, alias="TRADE_MANAGEMENT_TRAILING_ENABLED")
+    trade_management_trailing_activation_ratio: float = Field(default=0.60, alias="TRADE_MANAGEMENT_TRAILING_ACTIVATION_RATIO")
+    trade_management_trailing_distance_ratio: float = Field(default=0.40, alias="TRADE_MANAGEMENT_TRAILING_DISTANCE_RATIO")
+    trade_management_trailing_aggressive_activation_ratio: float = Field(
+        default=0.80,
+        alias="TRADE_MANAGEMENT_TRAILING_AGGRESSIVE_ACTIVATION_RATIO",
+    )
+    trade_management_trailing_aggressive_distance_ratio: float = Field(
+        default=0.10,
+        alias="TRADE_MANAGEMENT_TRAILING_AGGRESSIVE_DISTANCE_RATIO",
+    )
+    trade_management_min_step_ratio: float = Field(default=0.02, alias="TRADE_MANAGEMENT_MIN_STEP_RATIO")
     trading_symbol: str = Field(default="XAUUSD", alias="TRADING_SYMBOL")
     trading_timeframe: str = Field(default="M5", alias="TRADING_TIMEFRAME")
     context_timeframes_csv: str = Field(default="M15,M30,H1,H4", alias="CONTEXT_TIMEFRAMES")
     listener_interval_seconds: float = Field(default=1.0, alias="LISTENER_INTERVAL_SECONDS")
-    position_sync_interval_seconds: float = Field(default=5.0, alias="POSITION_SYNC_INTERVAL_SECONDS")
+    position_sync_interval_seconds: float = Field(default=1.0, alias="POSITION_SYNC_INTERVAL_SECONDS")
     account_snapshot_interval_seconds: float = Field(default=5.0, alias="ACCOUNT_SNAPSHOT_INTERVAL_SECONDS")
     heartbeat_interval_seconds: float = Field(default=10.0, alias="HEARTBEAT_INTERVAL_SECONDS")
     performance_interval_seconds: float = Field(default=300.0, alias="PERFORMANCE_INTERVAL_SECONDS")

@@ -61,6 +61,88 @@ class MT5OrderExecutor:
         result = mt5.order_check(request)
         return result._asdict() if result is not None else None
 
+    def get_symbol_min_stop_distance(self, symbol: str) -> float:
+        """Return broker minimum stop distance (price units) for SL/TP placement."""
+
+        self._require_mt5()
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return 0.0
+        point = float(getattr(info, "point", 0.0) or 0.0)
+        stops_level = float(getattr(info, "trade_stops_level", 0) or 0)
+        return stops_level * point
+
+    def _round_to_symbol_digits(self, symbol: str, price: float) -> float:
+        info = mt5.symbol_info(symbol)
+        digits = int(getattr(info, "digits", 5)) if info is not None else 5
+        return round(float(price), digits)
+
+    def modify_position_sltp(self, ticket: int, symbol: str, sl: float, tp: float) -> OrderResult:
+        """Modify SL/TP of an existing open position via TRADE_ACTION_SLTP."""
+
+        if self.settings.dry_run:
+            return OrderResult(
+                status=OrderExecutionStatus.DRY_RUN,
+                dry_run=True,
+                submitted_at=self._now(),
+                request_payload={"ticket": int(ticket), "symbol": symbol, "sl": sl, "tp": tp},
+                response_payload={"message": "DRY_RUN active. order_modify skipped."},
+            )
+
+        try:
+            self._require_mt5()
+            request = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "symbol": symbol,
+                "position": int(ticket),
+                "sl": self._round_to_symbol_digits(symbol, sl),
+                "tp": self._round_to_symbol_digits(symbol, tp),
+                "magic": self.settings.trading_magic_number,
+                "comment": "ai-trading:trade-mgmt",
+            }
+        except Exception as exc:
+            return OrderResult(
+                status=OrderExecutionStatus.ERROR,
+                dry_run=False,
+                submitted_at=self._now(),
+                error_message=str(exc),
+            )
+
+        result = mt5.order_send(request)
+        if result is None:
+            return OrderResult(
+                status=OrderExecutionStatus.ERROR,
+                dry_run=False,
+                submitted_at=self._now(),
+                request_payload=request,
+                error_message=f"order_modify failed: {mt5.last_error()}",
+            )
+
+        result_dict = result._asdict()
+        retcode = int(result_dict.get("retcode", -1))
+        success_codes = {
+            getattr(mt5, "TRADE_RETCODE_DONE", 0),
+            getattr(mt5, "TRADE_RETCODE_PLACED", 10008),
+        }
+        if retcode in success_codes:
+            return OrderResult(
+                status=OrderExecutionStatus.FILLED,
+                dry_run=False,
+                submitted_at=self._now(),
+                order_ticket=int(ticket),
+                request_payload=request,
+                response_payload=result_dict,
+            )
+
+        return OrderResult(
+            status=OrderExecutionStatus.REJECTED,
+            dry_run=False,
+            submitted_at=self._now(),
+            request_payload=request,
+            response_payload=result_dict,
+            error_message=f"order_modify rejected with retcode={retcode}",
+        )
+
     def build_market_order_request(self, signal: SignalContract, risk_plan: RiskPlan) -> dict[str, Any]:
         self._require_mt5()
 

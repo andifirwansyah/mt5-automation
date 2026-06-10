@@ -12,6 +12,7 @@ from src.services.runtime_config_service import RuntimeConfigService
 from src.services.runtime_state_service import RuntimeStateService
 from src.services.runtime_recovery_service import RuntimeRecoveryService
 from src.services.trade_lifecycle_service import TradeLifecycleService
+from src.services.trade_management_service import TradeManagementService
 
 __all__ = [
     "BotRuntimeService",
@@ -23,6 +24,7 @@ __all__ = [
     "AccountSnapshotUpdaterService",
     "PositionSyncService",
     "TradeLifecycleService",
+    "TradeManagementService",
     "RejectionJournalService",
     "RuntimeConfigService",
     "RuntimeRecoveryService",

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from src.repositories.position_repository import PositionRepository
 from src.services.position_sync_service import PositionSyncService
 from src.services.trade_lifecycle_service import TradeLifecycleService
+from src.services.trade_management_service import TradeManagementService
 
 
 class PositionOrchestrator:
@@ -18,10 +19,12 @@ class PositionOrchestrator:
         position_sync_service: PositionSyncService,
         trade_lifecycle_service: TradeLifecycleService,
         position_repository: PositionRepository,
+        trade_management_service: TradeManagementService | None = None,
     ) -> None:
         self.position_sync_service = position_sync_service
         self.trade_lifecycle_service = trade_lifecycle_service
         self.position_repository = position_repository
+        self.trade_management_service = trade_management_service
 
     @staticmethod
     def _utc_now() -> datetime:
@@ -29,6 +32,10 @@ class PositionOrchestrator:
 
     def run_cycle(self, account_id: uuid.UUID) -> dict[str, int]:
         synced_positions = self.position_sync_service.sync_open_positions(account_id=account_id)
+
+        managed = {"evaluated": 0, "modified": 0}
+        if self.trade_management_service is not None:
+            managed = self.trade_management_service.manage_positions(synced_positions)
 
         snapshots_created = 0
         for position in synced_positions:
@@ -53,4 +60,5 @@ class PositionOrchestrator:
             "synced_positions": len(synced_positions),
             "snapshots_created": snapshots_created,
             "closed_positions": lifecycle_result.get("closed_positions_db", 0),
+            "sl_modified": managed.get("modified", 0),
         }

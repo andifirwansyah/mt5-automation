@@ -57,5 +57,10 @@ def test_market_structure_runtime_config_specs_are_registered() -> None:
     assert "market_structure_zone_tolerance_atr" in RUNTIME_CONFIG_SPECS
     assert "market_structure_danger_zone_atr" in RUNTIME_CONFIG_SPECS
     assert "market_structure_min_candles_required" in RUNTIME_CONFIG_SPECS
+    assert "position_sync_interval_seconds" in RUNTIME_CONFIG_SPECS
+    assert "trade_management_trailing_aggressive_activation_ratio" in RUNTIME_CONFIG_SPECS
+    assert "trade_management_trailing_aggressive_distance_ratio" in RUNTIME_CONFIG_SPECS
     assert coerce_runtime_config_value("market_structure_override_min_confidence", "0.72") == 0.72
     assert coerce_runtime_config_value("market_structure_min_candles_required", "50") == 50
+    assert coerce_runtime_config_value("position_sync_interval_seconds", "1.5") == 1.5
+    assert coerce_runtime_config_value("trade_management_trailing_aggressive_distance_ratio", "0.1") == 0.1

@@ -123,6 +123,71 @@ RUNTIME_CONFIG_SPECS: dict[str, RuntimeConfigSpec] = {
         "Cooldown minutes between generated signals for the same symbol/timeframe.",
         minimum=0,
     ),
+    "trade_management_enabled": RuntimeConfigSpec(
+        "trade_management_enabled",
+        "bool",
+        "Enable post-entry break-even and trailing-stop management of open positions.",
+    ),
+    "trade_management_breakeven_trigger_ratio": RuntimeConfigSpec(
+        "trade_management_breakeven_trigger_ratio",
+        "float",
+        "Progress toward TP (0-1) at which SL is moved to break-even.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_management_breakeven_buffer_ratio": RuntimeConfigSpec(
+        "trade_management_breakeven_buffer_ratio",
+        "float",
+        "Break-even buffer as a fraction of the reward leg, to cover spread/commission.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_management_trailing_enabled": RuntimeConfigSpec(
+        "trade_management_trailing_enabled",
+        "bool",
+        "Enable trailing stop after the activation threshold is reached.",
+    ),
+    "trade_management_trailing_activation_ratio": RuntimeConfigSpec(
+        "trade_management_trailing_activation_ratio",
+        "float",
+        "Progress toward TP (0-1) at which trailing stop activates.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_management_trailing_distance_ratio": RuntimeConfigSpec(
+        "trade_management_trailing_distance_ratio",
+        "float",
+        "Trailing distance behind current price as a fraction of the reward leg.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_management_trailing_aggressive_activation_ratio": RuntimeConfigSpec(
+        "trade_management_trailing_aggressive_activation_ratio",
+        "float",
+        "Progress toward TP (0-1) at which aggressive trailing stop activates.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_management_trailing_aggressive_distance_ratio": RuntimeConfigSpec(
+        "trade_management_trailing_aggressive_distance_ratio",
+        "float",
+        "Aggressive trailing distance behind current price as a fraction of the reward leg.",
+        minimum=0,
+        maximum=1,
+    ),
+    "trade_management_min_step_ratio": RuntimeConfigSpec(
+        "trade_management_min_step_ratio",
+        "float",
+        "Minimum SL improvement (fraction of reward leg) before a broker modify is sent.",
+        minimum=0,
+        maximum=1,
+    ),
+    "position_sync_interval_seconds": RuntimeConfigSpec(
+        "position_sync_interval_seconds",
+        "float",
+        "Throttle for DB-backed position sync, snapshots, and lifecycle checks.",
+        minimum=0,
+    ),
 }
 
 
