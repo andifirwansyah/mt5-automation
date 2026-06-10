@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from src.api.main import app
 from src.config.settings import get_settings
-from src.infrastructure.database.models import Strategy, StrategyConfig
+from src.infrastructure.database.models import ExecutionOrder, Signal, SignalValidation, Strategy, StrategyConfig, Symbol, Timeframe
 from src.infrastructure.database.session import SessionLocal
 from src.repositories.auth_repository import AuthRepository
 from src.repositories.account_repository import AccountRepository
@@ -26,6 +26,217 @@ def test_fastapi_health_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
+
+
+def test_signal_summary_endpoint_returns_requested_totals(monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
+    get_settings.cache_clear()
+
+    login_email = f"dashboard.user.{uuid.uuid4().hex[:10]}@example.com"
+    login_password = "Pass123."
+    _create_dashboard_user(login_email, login_password)
+
+    summary_date = datetime(2030, 1, 15, 10, 0, tzinfo=timezone.utc)
+
+    session = SessionLocal()
+    try:
+        symbol = Symbol(
+            name=f"XAUUSD_SUMMARY_{uuid.uuid4().hex[:8]}",
+            asset_class="METAL",
+            digits=2,
+            point=0.01,
+            is_active=True,
+            metadata_json={"source": "pytest"},
+        )
+        timeframe = Timeframe(
+            code=f"M5_SUMMARY_{uuid.uuid4().hex[:8]}",
+            minutes=5,
+            description="Pytest summary timeframe",
+        )
+        strategy = Strategy(
+            code=f"PYTEST_SIGNAL_SUMMARY_{uuid.uuid4().hex[:8]}",
+            name="Pytest Signal Summary Strategy",
+            description="Created by signal summary api test",
+            is_active=True,
+            metadata_json={"source": "pytest"},
+        )
+        session.add_all([symbol, timeframe, strategy])
+        session.flush()
+
+        valid_signal = Signal(
+            trace_id=uuid.uuid4(),
+            symbol_id=symbol.id,
+            timeframe_id=timeframe.id,
+            strategy_id=strategy.id,
+            direction="BUY",
+            status="CREATED",
+            signal_time=summary_date,
+            entry_price=2300.0,
+            stop_loss=2295.0,
+            take_profit=2310.0,
+            lot_size=0.10,
+            confidence=0.80,
+            features={},
+            raw_payload={"source": "pytest-valid"},
+        )
+        rejected_signal = Signal(
+            trace_id=uuid.uuid4(),
+            symbol_id=symbol.id,
+            timeframe_id=timeframe.id,
+            strategy_id=strategy.id,
+            direction="SELL",
+            status="CREATED",
+            signal_time=summary_date.replace(hour=11),
+            entry_price=2298.0,
+            stop_loss=2304.0,
+            take_profit=2288.0,
+            lot_size=0.10,
+            confidence=0.72,
+            features={},
+            raw_payload={"source": "pytest-rejected"},
+        )
+        passed_signal = Signal(
+            trace_id=uuid.uuid4(),
+            symbol_id=symbol.id,
+            timeframe_id=timeframe.id,
+            strategy_id=strategy.id,
+            direction="BUY",
+            status="CREATED",
+            signal_time=summary_date.replace(hour=12),
+            entry_price=2302.0,
+            stop_loss=2297.0,
+            take_profit=2314.0,
+            lot_size=0.10,
+            confidence=0.91,
+            features={},
+            raw_payload={"source": "pytest-passed"},
+        )
+        dry_run_signal = Signal(
+            trace_id=uuid.uuid4(),
+            symbol_id=symbol.id,
+            timeframe_id=timeframe.id,
+            strategy_id=strategy.id,
+            direction="BUY",
+            status="CREATED",
+            signal_time=summary_date.replace(hour=13),
+            entry_price=2304.0,
+            stop_loss=2299.0,
+            take_profit=2316.0,
+            lot_size=0.10,
+            confidence=0.88,
+            features={},
+            raw_payload={"source": "pytest-dry-run"},
+        )
+        session.add_all([valid_signal, rejected_signal, passed_signal, dry_run_signal])
+        session.flush()
+
+        session.add_all(
+            [
+                SignalValidation(
+                    signal_id=valid_signal.id,
+                    validator_name="SignalValidator",
+                    status="PASSED",
+                    rejection_reason=None,
+                    error_message=None,
+                    details={},
+                    validated_at=summary_date,
+                ),
+                SignalValidation(
+                    signal_id=rejected_signal.id,
+                    validator_name="SignalValidator",
+                    status="REJECTED",
+                    rejection_reason="QUALITY_FILTER_FAILED",
+                    error_message=None,
+                    details={},
+                    validated_at=summary_date.replace(hour=11),
+                ),
+                SignalValidation(
+                    signal_id=passed_signal.id,
+                    validator_name="SignalValidator",
+                    status="PASSED",
+                    rejection_reason=None,
+                    error_message=None,
+                    details={},
+                    validated_at=summary_date.replace(hour=12),
+                ),
+                SignalValidation(
+                    signal_id=dry_run_signal.id,
+                    validator_name="SignalValidator",
+                    status="PASSED",
+                    rejection_reason=None,
+                    error_message=None,
+                    details={},
+                    validated_at=summary_date.replace(hour=13),
+                ),
+            ]
+        )
+        session.flush()
+
+        session.add_all(
+            [
+                ExecutionOrder(
+                    signal_id=passed_signal.id,
+                    execution_decision_id=None,
+                    symbol_id=symbol.id,
+                    mt5_order_ticket=987654321,
+                    side="BUY",
+                    order_type="MARKET",
+                    volume_lot=0.10,
+                    requested_price=2302.0,
+                    stop_loss=2297.0,
+                    take_profit=2314.0,
+                    deviation=20,
+                    status="SUBMITTED",
+                    broker_response={"source": "pytest"},
+                    error_message=None,
+                    executed_at=summary_date.replace(hour=12, minute=1),
+                ),
+                ExecutionOrder(
+                    signal_id=dry_run_signal.id,
+                    execution_decision_id=None,
+                    symbol_id=symbol.id,
+                    mt5_order_ticket=None,
+                    side="BUY",
+                    order_type="MARKET",
+                    volume_lot=0.10,
+                    requested_price=2304.0,
+                    stop_loss=2299.0,
+                    take_profit=2316.0,
+                    deviation=20,
+                    status="DRY_RUN",
+                    broker_response={"source": "pytest"},
+                    error_message=None,
+                    executed_at=summary_date.replace(hour=13, minute=1),
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    try:
+        client = TestClient(app)
+        headers = _login_and_get_auth_headers(client, login_email, login_password)
+        response = client.get("/api/v1/signals/summary?signal_date=2030-01-15", headers=headers)
+
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["summary"] == {
+            "total_signal": 4,
+            "total_valid": 3,
+            "total_rejected": 1,
+            "total_passed": 1,
+        }
+        assert payload["cards"] == {
+            "total_signals": 4,
+            "valid_signals": 3,
+            "rejected_signals": 1,
+            "execution_ready": 0,
+            "passed_to_mt5": 1,
+        }
+    finally:
+        get_settings.cache_clear()
 
 
 def test_openapi_declares_bearer_auth_scheme() -> None:

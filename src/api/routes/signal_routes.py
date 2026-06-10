@@ -43,6 +43,11 @@ EXECUTION_READY_STATUSES = {
     "PENDING_MANUAL_APPROVAL",
 }
 
+PASSED_TO_MT5_STATUSES = {
+    "ORDER_SUBMITTED",
+    "ORDER_FILLED",
+}
+
 
 def _resolve_signal_time_range(
     *,
@@ -207,11 +212,18 @@ def get_signal_summary(
                 "start_time": serialize_value(range_start),
                 "end_time": serialize_value(range_end),
             },
+            "summary": {
+                "total_signal": 0,
+                "total_valid": 0,
+                "total_rejected": 0,
+                "total_passed": 0,
+            },
             "cards": {
                 "total_signals": 0,
                 "valid_signals": 0,
                 "rejected_signals": 0,
                 "execution_ready": 0,
+                "passed_to_mt5": 0,
             },
         }
 
@@ -230,17 +242,25 @@ def get_signal_summary(
     valid_count = sum(1 for status in final_statuses if status in VALID_SIGNAL_STATUSES)
     rejected_count = sum(1 for status in final_statuses if status in REJECTED_SIGNAL_STATUSES)
     execution_ready_count = sum(1 for status in final_statuses if status in EXECUTION_READY_STATUSES)
+    passed_count = sum(1 for status in final_statuses if status in PASSED_TO_MT5_STATUSES)
 
     return {
         "range": {
             "start_time": serialize_value(range_start),
             "end_time": serialize_value(range_end),
         },
+        "summary": {
+            "total_signal": len(enriched_signals),
+            "total_valid": valid_count,
+            "total_rejected": rejected_count,
+            "total_passed": passed_count,
+        },
         "cards": {
             "total_signals": len(enriched_signals),
             "valid_signals": valid_count,
             "rejected_signals": rejected_count,
             "execution_ready": execution_ready_count,
+            "passed_to_mt5": passed_count,
         },
     }
 
