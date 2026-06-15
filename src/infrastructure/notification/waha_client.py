@@ -51,6 +51,7 @@ class WahaClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; MT5Automation/1.0; +https://trading-api.lalapan.online)",
         }
         if self.api_key:
             headers["X-Api-Key"] = self.api_key
