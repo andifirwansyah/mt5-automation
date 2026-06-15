@@ -52,3 +52,24 @@ Ini bagian yang menentukan desain, dan aku belum tahu maksudmu yang mana. Pertan
 - Realtime atau batch? Bias makro biasanya gak berubah tiap candle — lebih cocok di-refresh periodik (mirip PerformanceOrchestrator.start(interval_seconds=...)) dan engine pipeline tinggal baca hasil cache-nya, biar gak lambat di hot path per-candle.
 
 Mau aku buatkan implementasi skeleton-nya (model + engine + wiring + hook ke scorer, non-blocking, dengan data fundamental masih di-stub) supaya tinggal kamu isi sumber datanya? Atau kamu cerita dulu sumber data & instrumennya biar aku langsung bikin yang nyambung ke situ?
+
+
+Menurut gue kita bagi 3 milestone:
+Milestone A — Basic Working
+Phase 1–3  
+Hasil:
+- WAHA dan Groq terhubung
+- QR scan jalan
+- narasi AI bisa dibuat
+Milestone B — Usable MVP
+Phase 4–5  
+Hasil:
+- recipient bisa dipilih
+- event notif benar-benar terkirim
+Milestone C — Ready to Use
+Phase 6–8  
+Hasil:
+- ada audit
+- retry/fallback aman
+- daily summary jalan
+- operasional dashboard lebih matang

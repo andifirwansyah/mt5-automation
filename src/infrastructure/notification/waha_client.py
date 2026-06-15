@@ -88,7 +88,7 @@ class WahaClient:
             method=method.upper(),
         )
         try:
-            with self._requester(req, self.timeout_seconds) as response:
+            with self._requester(req, timeout=self.timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw else None
         except error.HTTPError as exc:

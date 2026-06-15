@@ -78,7 +78,7 @@ class GroqNarratorClient:
             method="POST",
         )
         try:
-            with self._requester(req, self.timeout_seconds) as response:
+            with self._requester(req, timeout=self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
