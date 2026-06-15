@@ -30,7 +30,7 @@ class PositionOrchestrator:
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
-    def run_cycle(self, account_id: uuid.UUID) -> dict[str, int]:
+    def run_cycle(self, account_id: uuid.UUID) -> dict[str, int | list]:
         synced_positions = self.position_sync_service.sync_open_positions(account_id=account_id)
 
         managed = {"evaluated": 0, "modified": 0}
@@ -60,5 +60,6 @@ class PositionOrchestrator:
             "synced_positions": len(synced_positions),
             "snapshots_created": snapshots_created,
             "closed_positions": lifecycle_result.get("closed_positions_db", 0),
+            "closed_position_rows": lifecycle_result.get("closed_positions", []),
             "sl_modified": managed.get("modified", 0),
         }

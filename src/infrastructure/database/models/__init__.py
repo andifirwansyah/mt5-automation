@@ -14,6 +14,7 @@ from src.infrastructure.database.models.risk_models import PreTradeSimulation, R
 from src.infrastructure.database.models.safety_models import KillSwitchState, SafetyEvent
 from src.infrastructure.database.models.signal_models import HistoricalEdgeValidation, Signal, SignalValidation
 from src.infrastructure.database.models.strategy_models import Strategy, StrategyConfig, StrategySelection
+from src.infrastructure.database.models.notification_models import NotificationDelivery, NotificationRecipient, NotificationSubscription
 
 __all__ = [
     "BotInstance",
@@ -24,6 +25,9 @@ __all__ = [
     "AccountSnapshot",
     "DashboardUser",
     "DashboardTokenRevocation",
+    "NotificationDelivery",
+    "NotificationRecipient",
+    "NotificationSubscription",
     "Symbol",
     "Timeframe",
     "Candle",

@@ -67,6 +67,8 @@ from src.services import (
     CandleService,
     EngineAuditService,
     HeartbeatService,
+    NotificationRuntimeService,
+    NotificationRetryWorkerService,
     PositionSyncService,
     RejectionJournalService,
     RuntimeRecoveryService,
@@ -92,6 +94,8 @@ def main() -> None:
 
     heartbeat_service: HeartbeatService | None = None
     account_snapshot_updater: AccountSnapshotUpdaterService | None = None
+    notification_retry_worker: NotificationRetryWorkerService | None = None
+    notification_runtime_service: NotificationRuntimeService | None = None
     listener: MT5ListenerEngine | None = None
     performance_orchestrator: PerformanceOrchestrator | None = None
     mt5_connection: MT5Connection | None = None
@@ -216,6 +220,17 @@ def main() -> None:
         )
         account_snapshot_updater.start()
 
+        notification_retry_worker = NotificationRetryWorkerService(
+            session_factory=SessionLocal,
+            settings=settings,
+        )
+        notification_retry_worker.start()
+
+        notification_runtime_service = NotificationRuntimeService(
+            session_factory=SessionLocal,
+            settings=settings,
+        )
+
         # engines
         kill_switch_monitor = KillSwitchMonitor(safety_repo, runtime_settings)
         data_collector = DataCollectorEngine(
@@ -309,7 +324,9 @@ def main() -> None:
         last_position_sync = {"ts": 0.0}
 
         def on_new_candle(candle_event: dict) -> None:
-            trading_orchestrator.run_cycle(candle_event)
+            final_context = trading_orchestrator.run_cycle(candle_event)
+            if notification_runtime_service is not None:
+                notification_runtime_service.process_trading_context(final_context)
 
         def on_tick(_tick: dict) -> None:
             live_positions = position_client.get_open_positions(symbol=settings.trading_symbol)
@@ -319,7 +336,9 @@ def main() -> None:
             if now - last_position_sync["ts"] < runtime_settings.position_sync_interval_seconds:
                 return
             last_position_sync["ts"] = now
-            position_orchestrator.run_cycle(account_id=trading_account.id)
+            position_result = position_orchestrator.run_cycle(account_id=trading_account.id)
+            if notification_runtime_service is not None:
+                notification_runtime_service.process_closed_positions(position_result.get("closed_position_rows", []))
 
         # 4) Listener loop
         listener = MT5ListenerEngine(
@@ -354,6 +373,8 @@ def main() -> None:
             heartbeat_service.stop()
         if account_snapshot_updater is not None:
             account_snapshot_updater.stop()
+        if notification_retry_worker is not None:
+            notification_retry_worker.stop()
         if performance_orchestrator is not None:
             performance_orchestrator.stop()
 

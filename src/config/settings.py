@@ -108,6 +108,23 @@ class AppSettings(BaseSettings):
     log_compression: str = Field(default="zip", alias="LOG_COMPRESSION")
 
     timezone: str = Field(default="UTC", alias="TIMEZONE")
+    waha_base_url: str = Field(default="", alias="WAHA_BASE_URL")
+    waha_api_key: str = Field(default="", alias="WAHA_API_KEY")
+    waha_default_session: str = Field(default="default", alias="WAHA_DEFAULT_SESSION")
+    waha_request_timeout_seconds: float = Field(default=10.0, alias="WAHA_REQUEST_TIMEOUT_SECONDS")
+    groq_base_url: str = Field(default="https://api.groq.com/openai/v1", alias="GROQ_BASE_URL")
+    groq_secret_key: str = Field(default="", alias="GROQ_SECRET_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
+    groq_request_timeout_seconds: float = Field(default=15.0, alias="GROQ_REQUEST_TIMEOUT_SECONDS")
+    notification_ai_enabled: bool = Field(default=False, alias="NOTIFICATION_AI_ENABLED")
+    notification_ai_max_sentences: int = Field(default=3, alias="NOTIFICATION_AI_MAX_SENTENCES")
+    notification_retry_enabled: bool = Field(default=True, alias="NOTIFICATION_RETRY_ENABLED")
+    notification_retry_max_attempts: int = Field(default=3, alias="NOTIFICATION_RETRY_MAX_ATTEMPTS")
+    notification_retry_batch_limit: int = Field(default=100, alias="NOTIFICATION_RETRY_BATCH_LIMIT")
+    notification_retry_loop_interval_seconds: float = Field(default=30.0, alias="NOTIFICATION_RETRY_LOOP_INTERVAL_SECONDS")
+    notification_retry_backoff_base_seconds: float = Field(default=60.0, alias="NOTIFICATION_RETRY_BACKOFF_BASE_SECONDS")
+    notification_retry_backoff_multiplier: float = Field(default=2.0, alias="NOTIFICATION_RETRY_BACKOFF_MULTIPLIER")
+    notification_retry_backoff_max_seconds: float = Field(default=3600.0, alias="NOTIFICATION_RETRY_BACKOFF_MAX_SECONDS")
 
     @property
     def context_timeframes(self) -> list[str]:

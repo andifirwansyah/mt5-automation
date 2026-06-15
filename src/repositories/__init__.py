@@ -6,6 +6,7 @@ from src.repositories.bot_repository import BotRepository
 from src.repositories.execution_repository import ExecutionRepository
 from src.repositories.journal_repository import JournalRepository
 from src.repositories.market_repository import MarketRepository
+from src.repositories.notification_repository import NotificationRepository
 from src.repositories.performance_repository import PerformanceRepository
 from src.repositories.position_repository import PositionRepository
 from src.repositories.regime_repository import RegimeRepository
@@ -19,6 +20,7 @@ __all__ = [
     "BotRepository",
     "AccountRepository",
     "AuthRepository",
+    "NotificationRepository",
     "MarketRepository",
     "RegimeRepository",
     "StrategyRepository",

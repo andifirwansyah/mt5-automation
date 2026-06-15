@@ -241,6 +241,11 @@ class ExecutionEngine(PipelineStep):
             self.execution_repository.session.commit()
 
             context.order_result = result
+            context.order_result.response_payload = {
+                **(context.order_result.response_payload or {}),
+                "execution_order_id": str(updated.id) if updated is not None else str(pending.id),
+                "mt5_order_ticket": result.order_ticket,
+            }
 
             if result.status not in (OrderExecutionStatus.FILLED, OrderExecutionStatus.SUBMITTED):
                 context.reject(

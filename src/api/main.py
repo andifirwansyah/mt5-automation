@@ -13,6 +13,7 @@ from src.api.routes.execution_routes import router as execution_router
 from src.api.routes.health_routes import router as health_router
 from src.api.routes.journal_routes import router as journal_router
 from src.api.routes.market_routes import router as market_router
+from src.api.routes.notification_routes import router as notification_router
 from src.api.routes.performance_routes import router as performance_router
 from src.api.routes.position_routes import router as position_router
 from src.api.routes.regime_routes import router as regime_router
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(position_router, dependencies=protected_dependencies)
     app.include_router(journal_router, dependencies=protected_dependencies)
     app.include_router(performance_router, dependencies=protected_dependencies)
+    app.include_router(notification_router, dependencies=protected_dependencies)
     app.include_router(ws_router)
 
     return app

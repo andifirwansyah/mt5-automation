@@ -27,13 +27,14 @@ class TradeLifecycleService:
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
-    def detect_order_position_lifecycle(self, account_id: uuid.UUID) -> dict[str, int]:
+    def detect_order_position_lifecycle(self, account_id: uuid.UUID) -> dict[str, int | list]:
         mt5_open_positions = self.position_client.get_open_positions()
         mt5_open_tickets = {int(p.get("ticket", 0)) for p in mt5_open_positions}
 
         db_open_positions = self.position_repository.get_open_positions(account_id=account_id)
 
         closed_count = 0
+        closed_positions = []
         for db_pos in db_open_positions:
             ticket = db_pos.mt5_position_ticket
             if ticket is None:
@@ -61,9 +62,11 @@ class TradeLifecycleService:
                 details={"ticket": int(ticket), "source": "trade_lifecycle_service"},
             )
             closed_count += 1
+            closed_positions.append(closed)
 
         self.position_repository.session.commit()
         return {
             "open_positions_mt5": len(mt5_open_positions),
             "closed_positions_db": closed_count,
+            "closed_positions": closed_positions,
         }

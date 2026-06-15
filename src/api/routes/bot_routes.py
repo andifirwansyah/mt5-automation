@@ -79,5 +79,5 @@ def update_runtime_config(config_key: str, payload: RuntimeConfigUpdatePayload) 
             update_reason=payload.reason,
         )
     except (KeyError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return {"config": model_to_dict(updated)}
