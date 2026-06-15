@@ -11,7 +11,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from src.config.settings import AppSettings
-from src.infrastructure.notification import GroqNarratorClient, WahaClient
+from src.infrastructure.notification import GroqNarratorClient, WwebClient
 from src.repositories.notification_repository import NotificationRepository
 from src.services.notification_message_builder import NotificationMessageBuilder
 from src.services.notification_narrator_service import NotificationNarratorService
@@ -46,11 +46,10 @@ class NotificationRetryWorkerService:
             )
         return WhatsappDispatchService(
             repository=NotificationRepository(session),
-            waha_client=WahaClient(
-                base_url=self.settings.waha_base_url,
-                api_key=self.settings.waha_api_key,
-                default_session=self.settings.waha_default_session,
-                timeout_seconds=self.settings.waha_request_timeout_seconds,
+            wweb_client=WwebClient(
+                base_url=self.settings.wweb_base_url,
+                api_key=self.settings.wweb_api_key,
+                timeout_seconds=self.settings.wweb_request_timeout_seconds,
             ),
             message_builder=NotificationMessageBuilder(),
             narrator_service=NotificationNarratorService(

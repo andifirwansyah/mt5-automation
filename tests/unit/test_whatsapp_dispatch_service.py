@@ -28,14 +28,14 @@ class FakeRepo:
         return getattr(self, "delivery_row", None)
 
 
-class FakeWahaClient:
+class FakeWwebClient:
     def __init__(self, should_fail: bool = False) -> None:
         self.should_fail = should_fail
 
-    def send_text_message(self, *, chat_id: str, text: str, session: str | None = None):
+    def send_text_message(self, *, chat_id: str, text: str):
         if self.should_fail:
-            raise RuntimeError("waha down")
-        return {"id": "msg-1", "status": "queued", "chatId": chat_id, "session": session, "text": text}
+            raise RuntimeError("wweb down")
+        return {"id": "msg-1", "status": "queued", "chatId": chat_id, "text": text}
 
 
 class FakeNarrator:
@@ -65,7 +65,7 @@ def test_whatsapp_dispatch_service_send_test_message() -> None:
     recipient = _build_recipient()
     service = WhatsappDispatchService(
         repository=FakeRepo(recipient),
-        waha_client=FakeWahaClient(),
+        wweb_client=FakeWwebClient(),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
     )
@@ -83,7 +83,7 @@ def test_whatsapp_dispatch_service_dispatch_event_renders_message() -> None:
     recipient = _build_recipient()
     service = WhatsappDispatchService(
         repository=FakeRepo(recipient),
-        waha_client=FakeWahaClient(),
+        wweb_client=FakeWwebClient(),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
     )
@@ -112,7 +112,7 @@ def test_whatsapp_dispatch_service_records_failed_delivery() -> None:
     repo = FakeRepo(recipient)
     service = WhatsappDispatchService(
         repository=repo,
-        waha_client=FakeWahaClient(should_fail=True),
+        wweb_client=FakeWwebClient(should_fail=True),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
     )
@@ -120,12 +120,12 @@ def test_whatsapp_dispatch_service_records_failed_delivery() -> None:
     try:
         service.send_test_message(recipient_id=recipient.id, message="hello ops")
     except RuntimeError as exc:
-        assert "waha down" in str(exc)
+        assert "wweb down" in str(exc)
     else:
-        raise AssertionError("Expected WAHA failure")
+        raise AssertionError("Expected WWEB failure")
 
     assert repo.deliveries[-1]["status"] == "failed"
-    assert repo.deliveries[-1]["error_message"] == "waha down"
+    assert repo.deliveries[-1]["error_message"] == "wweb down"
 
 
 def test_whatsapp_dispatch_service_retry_failed_delivery() -> None:
@@ -148,7 +148,7 @@ def test_whatsapp_dispatch_service_retry_failed_delivery() -> None:
     )()
     service = WhatsappDispatchService(
         repository=repo,
-        waha_client=FakeWahaClient(),
+        wweb_client=FakeWwebClient(),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
     )
@@ -180,7 +180,7 @@ def test_whatsapp_dispatch_service_respects_retry_max_attempts() -> None:
     )()
     service = WhatsappDispatchService(
         repository=repo,
-        waha_client=FakeWahaClient(),
+        wweb_client=FakeWwebClient(),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
         retry_max_attempts=3,
@@ -201,7 +201,7 @@ def test_whatsapp_dispatch_service_lists_retry_candidates() -> None:
     repo.list_retry_candidates = lambda **kwargs: expected
     service = WhatsappDispatchService(
         repository=repo,
-        waha_client=FakeWahaClient(),
+        wweb_client=FakeWwebClient(),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
         retry_enabled=True,
@@ -219,7 +219,7 @@ def test_whatsapp_dispatch_service_marks_final_failed_attempt_as_exhausted() -> 
     repo = FakeRepo(recipient)
     service = WhatsappDispatchService(
         repository=repo,
-        waha_client=FakeWahaClient(should_fail=True),
+        wweb_client=FakeWwebClient(should_fail=True),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
         retry_enabled=True,
@@ -247,7 +247,7 @@ def test_whatsapp_dispatch_service_rejects_inactive_test_message() -> None:
     recipient.is_active = False
     service = WhatsappDispatchService(
         repository=FakeRepo(recipient),
-        waha_client=FakeWahaClient(),
+        wweb_client=FakeWwebClient(),
         message_builder=NotificationMessageBuilder(),
         narrator_service=FakeNarrator(),
     )

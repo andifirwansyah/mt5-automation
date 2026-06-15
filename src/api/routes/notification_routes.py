@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from src.api.deps import get_db, serialize_value
 from src.config.settings import get_settings
 from src.infrastructure.database.models import NotificationDelivery, NotificationRecipient, NotificationSubscription
-from src.infrastructure.notification import GroqNarratorClient, NotificationEventType, WahaClient, WahaClientError
+from src.infrastructure.notification import GroqNarratorClient, NotificationEventType, WwebClient, WwebClientError
 from src.schemas.notification import (
     WhatsappDispatchPayload,
     WhatsappDispatchResponse,
@@ -23,40 +23,24 @@ from src.schemas.notification import (
     WhatsappRecipientResponse,
     WhatsappTestMessagePayload,
     WhatsappRecipientUpdatePayload,
-    WhatsappQrCodeResponse,
     WhatsappRetryDeliveryResponse,
     WhatsappRetryPolicyResponse,
-    WhatsappSessionCreatePayload,
-    WhatsappSessionListResponse,
-    WhatsappSessionResponse,
 )
 from src.repositories.notification_repository import NotificationRepository
 from src.services.notification_message_builder import NotificationMessageBuilder
 from src.services.notification_narrator_service import NotificationNarratorService
 from src.services.whatsapp_dispatch_service import WhatsappDispatchService, WhatsappSendResult
-from src.services.whatsapp_session_service import WhatsappSessionService
 from src.services.whatsapp_recipient_service import WhatsappRecipientService
 
 router = APIRouter(prefix="/api/v1/notifications/whatsapp", tags=["notifications"])
 
-
-def _whatsapp_session_service() -> WhatsappSessionService:
-    settings = get_settings()
-    return WhatsappSessionService(
-        WahaClient(
-            base_url=settings.waha_base_url,
-            api_key=settings.waha_api_key,
-            default_session=settings.waha_default_session,
-            timeout_seconds=settings.waha_request_timeout_seconds,
-        )
-    )
+DEFAULT_WHATSAPP_SESSION_NAME = "default"
 
 
 def _whatsapp_recipient_service(db: Session) -> WhatsappRecipientService:
-    settings = get_settings()
     return WhatsappRecipientService(
         repository=NotificationRepository(db),
-        default_session_name=settings.waha_default_session,
+        default_session_name=DEFAULT_WHATSAPP_SESSION_NAME,
     )
 
 
@@ -81,11 +65,10 @@ def _whatsapp_dispatch_service(db: Session) -> WhatsappDispatchService:
     settings = get_settings()
     return WhatsappDispatchService(
         repository=NotificationRepository(db),
-        waha_client=WahaClient(
-            base_url=settings.waha_base_url,
-            api_key=settings.waha_api_key,
-            default_session=settings.waha_default_session,
-            timeout_seconds=settings.waha_request_timeout_seconds,
+        wweb_client=WwebClient(
+            base_url=settings.wweb_base_url,
+            api_key=settings.wweb_api_key,
+            timeout_seconds=settings.wweb_request_timeout_seconds,
         ),
         message_builder=NotificationMessageBuilder(),
         narrator_service=_notification_narrator_service(),
@@ -95,11 +78,7 @@ def _whatsapp_dispatch_service(db: Session) -> WhatsappDispatchService:
     )
 
 
-def _to_session_response(item: object) -> WhatsappSessionResponse:
-    return WhatsappSessionResponse.model_validate(item, from_attributes=True)
-
-
-def _map_waha_error(exc: WahaClientError) -> HTTPException:
+def _map_wweb_error(exc: WwebClientError) -> HTTPException:
     detail = str(exc)
     if exc.status_code == 400:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
@@ -183,93 +162,6 @@ def _retry_policy_response() -> WhatsappRetryPolicyResponse:
         max_attempts=settings.notification_retry_max_attempts,
         batch_limit=settings.notification_retry_batch_limit,
     )
-
-
-@router.get("/sessions", response_model=WhatsappSessionListResponse)
-def list_whatsapp_sessions(include_all: bool = Query(default=True)) -> WhatsappSessionListResponse:
-    service = _whatsapp_session_service()
-    try:
-        items = service.list_sessions(include_all=include_all)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return WhatsappSessionListResponse(items=[_to_session_response(item) for item in items])
-
-
-@router.post("/sessions", response_model=WhatsappSessionResponse)
-def create_whatsapp_session(payload: WhatsappSessionCreatePayload) -> WhatsappSessionResponse:
-    service = _whatsapp_session_service()
-    try:
-        created = service.create_session(
-            session_name=payload.session_name,
-            start=payload.start,
-            metadata=payload.metadata,
-        )
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return _to_session_response(created)
-
-
-@router.get("/sessions/{session_name}", response_model=WhatsappSessionResponse)
-def get_whatsapp_session(session_name: str) -> WhatsappSessionResponse:
-    service = _whatsapp_session_service()
-    try:
-        session = service.get_session(session_name)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return _to_session_response(session)
-
-
-@router.post("/sessions/{session_name}/start", response_model=WhatsappSessionResponse)
-def start_whatsapp_session(session_name: str) -> WhatsappSessionResponse:
-    service = _whatsapp_session_service()
-    try:
-        session = service.start_session(session_name)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return _to_session_response(session)
-
-
-@router.post("/sessions/{session_name}/stop", response_model=WhatsappSessionResponse)
-def stop_whatsapp_session(session_name: str) -> WhatsappSessionResponse:
-    service = _whatsapp_session_service()
-    try:
-        session = service.stop_session(session_name)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return _to_session_response(session)
-
-
-@router.post("/sessions/{session_name}/restart", response_model=WhatsappSessionResponse)
-def restart_whatsapp_session(session_name: str) -> WhatsappSessionResponse:
-    service = _whatsapp_session_service()
-    try:
-        session = service.restart_session(session_name)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return _to_session_response(session)
-
-
-@router.post("/sessions/{session_name}/logout", response_model=WhatsappSessionResponse)
-def logout_whatsapp_session(session_name: str) -> WhatsappSessionResponse:
-    service = _whatsapp_session_service()
-    try:
-        session = service.logout_session(session_name)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return _to_session_response(session)
-
-
-@router.get("/sessions/{session_name}/qr", response_model=WhatsappQrCodeResponse)
-def get_whatsapp_session_qr(
-    session_name: str,
-    qr_format: str = Query(default="image", pattern="^(image|raw)$"),
-) -> WhatsappQrCodeResponse:
-    service = _whatsapp_session_service()
-    try:
-        result = service.get_qr_code(session_name, qr_format=qr_format)
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
-    return WhatsappQrCodeResponse.model_validate(result, from_attributes=True)
 
 
 @router.get("/recipients", response_model=WhatsappRecipientListResponse)
@@ -356,8 +248,8 @@ def send_whatsapp_test_message(
         result = service.send_test_message(recipient_id=recipient_id, message=payload.message)
     except ValueError as exc:
         raise _map_value_error(exc) from exc
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
+    except WwebClientError as exc:
+        raise _map_wweb_error(exc) from exc
     return WhatsappDispatchResponse(total_sent=1, results=[_to_dispatch_result_response(result)])
 
 
@@ -377,8 +269,8 @@ def dispatch_whatsapp_event(
         )
     except ValueError as exc:
         raise _map_value_error(exc) from exc
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
+    except WwebClientError as exc:
+        raise _map_wweb_error(exc) from exc
     return WhatsappDispatchResponse(
         event_type=payload.event_type,
         total_sent=len(results),
@@ -393,8 +285,8 @@ def retry_whatsapp_delivery(delivery_id: uuid.UUID, db: Session = Depends(get_db
         result = service.retry_delivery(delivery_id=delivery_id)
     except ValueError as exc:
         raise _map_value_error(exc) from exc
-    except WahaClientError as exc:
-        raise _map_waha_error(exc) from exc
+    except WwebClientError as exc:
+        raise _map_wweb_error(exc) from exc
     return WhatsappRetryDeliveryResponse(delivery=_to_dispatch_result_response(result))
 
 

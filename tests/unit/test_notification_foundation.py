@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from src.config.settings import get_settings
-from src.infrastructure.notification import NotificationEventType, WahaClient
+from src.infrastructure.notification import NotificationEventType, WwebClient
 from src.infrastructure.notification.groq_narrator_client import GroqNarratorClient
 from src.services.notification_message_builder import NotificationMessageBuilder
 from src.services.notification_narrator_service import NotificationNarratorService
@@ -23,10 +23,9 @@ class FakeResponse:
         return None
 
 
-def test_notification_settings_reads_waha_and_groq_env(monkeypatch) -> None:
-    monkeypatch.setenv("WAHA_BASE_URL", "https://example-waha.test")
-    monkeypatch.setenv("WAHA_API_KEY", "waha-key")
-    monkeypatch.setenv("WAHA_DEFAULT_SESSION", "ops-main")
+def test_notification_settings_reads_wweb_and_groq_env(monkeypatch) -> None:
+    monkeypatch.setenv("WWEB_BASE_URL", "https://example-wweb.test")
+    monkeypatch.setenv("WWEB_REQUEST_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("GROQ_SECRET_KEY", "groq-key")
     monkeypatch.setenv("GROQ_MODEL", "llama-test")
     monkeypatch.setenv("NOTIFICATION_AI_MAX_SENTENCES", "2")
@@ -34,9 +33,8 @@ def test_notification_settings_reads_waha_and_groq_env(monkeypatch) -> None:
 
     settings = get_settings()
 
-    assert settings.waha_base_url == "https://example-waha.test"
-    assert settings.waha_api_key == "waha-key"
-    assert settings.waha_default_session == "ops-main"
+    assert settings.wweb_base_url == "https://example-wweb.test"
+    assert settings.wweb_request_timeout_seconds == 5.0
     assert settings.groq_secret_key == "groq-key"
     assert settings.groq_model == "llama-test"
     assert settings.notification_ai_max_sentences == 2
@@ -44,7 +42,7 @@ def test_notification_settings_reads_waha_and_groq_env(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
-def test_waha_client_send_text_uses_expected_payload() -> None:
+def test_wweb_client_send_text_uses_expected_payload() -> None:
     captured: dict[str, object] = {}
 
     def fake_requester(req, timeout):
@@ -54,84 +52,24 @@ def test_waha_client_send_text_uses_expected_payload() -> None:
         captured["headers"] = dict(req.header_items())
         return FakeResponse({"id": "msg-1", "status": "queued"})
 
-    client = WahaClient(
-        base_url="https://waha.example.com",
+    client = WwebClient(
+        base_url="https://wweb.example.com",
         api_key="secret",
-        default_session="ops-main",
         requester=fake_requester,
     )
 
     response = client.send_text_message(chat_id="628123@c.us", text="hello")
 
-    assert captured["url"] == "https://waha.example.com/api/sendText"
+    assert captured["url"] == "https://wweb.example.com/send-message"
     assert captured["timeout"] == 10.0
     assert captured["body"] == {
-        "session": "ops-main",
         "chatId": "628123@c.us",
-        "text": "hello",
+        "message": "hello",
     }
     headers = {str(key).lower(): str(value) for key, value in captured["headers"].items()}
+    assert headers["user-agent"]
     assert headers["x-api-key"] == "secret"
     assert response["status"] == "queued"
-
-
-def test_waha_client_get_qr_code_uses_json_accept_header() -> None:
-    captured: dict[str, object] = {}
-
-    def fake_requester(req, timeout):
-        captured["url"] = req.full_url
-        captured["headers"] = dict(req.header_items())
-        return FakeResponse({"mimetype": "image/png", "data": "base64-qr"})
-
-    client = WahaClient(
-        base_url="https://waha.example.com",
-        api_key="secret",
-        requester=fake_requester,
-    )
-
-    result = client.get_qr_code("ops-main", qr_format="image")
-
-    headers = {str(key).lower(): str(value) for key, value in captured["headers"].items()}
-    assert captured["url"] == "https://waha.example.com/api/ops-main/auth/qr?format=image"
-    assert headers["accept"] == "application/json"
-    assert result.data == "base64-qr"
-
-
-def test_waha_client_encodes_session_name_for_qr_path() -> None:
-    captured: dict[str, object] = {}
-
-    def fake_requester(req, timeout):
-        captured["url"] = req.full_url
-        return FakeResponse({"value": "raw-qr"})
-
-    client = WahaClient(
-        base_url="https://waha.example.com",
-        api_key="secret",
-        requester=fake_requester,
-    )
-
-    result = client.get_qr_code("ops main", qr_format="raw")
-
-    assert captured["url"] == "https://waha.example.com/api/ops%20main/auth/qr?format=raw"
-    assert result.value == "raw-qr"
-
-
-def test_waha_client_rejects_missing_qr_payload_data() -> None:
-    def fake_requester(req, timeout):
-        return FakeResponse({"mimetype": "image/png"})
-
-    client = WahaClient(
-        base_url="https://waha.example.com",
-        api_key="secret",
-        requester=fake_requester,
-    )
-
-    try:
-        client.get_qr_code("ops-main", qr_format="image")
-    except Exception as exc:
-        assert "missing data" in str(exc).lower()
-    else:
-        raise AssertionError("Expected missing QR data to raise error")
 
 
 def test_groq_narrator_client_parses_chat_completion() -> None:

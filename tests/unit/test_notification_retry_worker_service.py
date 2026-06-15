@@ -51,7 +51,7 @@ class FakeDispatchService:
 def test_whatsapp_dispatch_service_backoff_and_due_filtering() -> None:
     service = WhatsappDispatchService(
         repository=object(),  # type: ignore[arg-type]
-        waha_client=object(),  # type: ignore[arg-type]
+        wweb_client=object(),  # type: ignore[arg-type]
         message_builder=object(),  # type: ignore[arg-type]
         narrator_service=object(),  # type: ignore[arg-type]
         retry_backoff_base_seconds=60,

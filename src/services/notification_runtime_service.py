@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.config.settings import AppSettings
 from src.domain.enums import ExecutionDecisionStatus, OrderExecutionStatus
-from src.infrastructure.notification import GroqNarratorClient, NotificationEventType, WahaClient
+from src.infrastructure.notification import GroqNarratorClient, NotificationEventType, WwebClient
 from src.pipeline.trading_context import TradingContext
 from src.repositories.notification_repository import NotificationRepository
 from src.services.notification_message_builder import NotificationMessageBuilder
@@ -83,11 +83,10 @@ class NotificationRuntimeService:
             )
         return WhatsappDispatchService(
             repository=NotificationRepository(session),
-            waha_client=WahaClient(
-                base_url=self.settings.waha_base_url,
-                api_key=self.settings.waha_api_key,
-                default_session=self.settings.waha_default_session,
-                timeout_seconds=self.settings.waha_request_timeout_seconds,
+            wweb_client=WwebClient(
+                base_url=self.settings.wweb_base_url,
+                api_key=self.settings.wweb_api_key,
+                timeout_seconds=self.settings.wweb_request_timeout_seconds,
             ),
             message_builder=NotificationMessageBuilder(),
             narrator_service=NotificationNarratorService(

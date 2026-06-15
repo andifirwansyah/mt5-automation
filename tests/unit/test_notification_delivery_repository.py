@@ -24,7 +24,7 @@ def test_notification_repository_create_delivery_stores_entity() -> None:
     delivery = repo.create_delivery(
         recipient_id=uuid.uuid4(),
         event_type="SIGNAL_READY",
-        provider_name="WAHA",
+        provider_name="WWEB",
         session_name="default",
         destination="628123@c.us",
         status="queued",
@@ -35,7 +35,7 @@ def test_notification_repository_create_delivery_stores_entity() -> None:
         details={"id": "msg-1"},
     )
 
-    assert delivery.provider_name == "WAHA"
+    assert delivery.provider_name == "WWEB"
     assert delivery.status == "queued"
     assert delivery.attempt_number == 1
     assert session.flushed is True

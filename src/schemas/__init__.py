@@ -16,10 +16,6 @@ from src.schemas.notification import (
     WhatsappRecipientResponse,
     WhatsappTestMessagePayload,
     WhatsappRecipientUpdatePayload,
-    WhatsappQrCodeResponse,
-    WhatsappSessionCreatePayload,
-    WhatsappSessionListResponse,
-    WhatsappSessionResponse,
 )
 from src.schemas.runtime_config import RuntimeConfigUpdatePayload
 from src.schemas.auth import UserLoginRequest, UserLoginResponse
@@ -42,10 +38,6 @@ __all__ = [
     "WhatsappRecipientResponse",
     "WhatsappTestMessagePayload",
     "WhatsappRecipientUpdatePayload",
-    "WhatsappQrCodeResponse",
-    "WhatsappSessionCreatePayload",
-    "WhatsappSessionListResponse",
-    "WhatsappSessionResponse",
     "UserLoginRequest",
     "UserLoginResponse",
     "RuntimeConfigUpdatePayload",

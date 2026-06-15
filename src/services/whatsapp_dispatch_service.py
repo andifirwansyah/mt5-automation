@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -12,12 +13,14 @@ from src.infrastructure.notification import (
     NotificationEventType,
     NotificationNarrativeResult,
     RenderedNotificationMessage,
-    WahaClient,
+    WwebClient,
 )
 from src.repositories.notification_repository import NotificationRepository
 from src.services.notification_message_builder import NotificationMessageBuilder
 from src.services.notification_narrator_service import NotificationNarratorService
 from src.services.whatsapp_recipient_service import WHATSAPP_CHANNEL_TYPE, WhatsappRecipientService
+
+ERROR_MESSAGE_MAX_LENGTH = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +47,7 @@ class WhatsappDispatchService:
         self,
         *,
         repository: NotificationRepository,
-        waha_client: WahaClient,
+        wweb_client: WwebClient,
         message_builder: NotificationMessageBuilder,
         narrator_service: NotificationNarratorService,
         retry_enabled: bool = True,
@@ -55,7 +58,7 @@ class WhatsappDispatchService:
         retry_backoff_max_seconds: float = 3600.0,
     ) -> None:
         self.repository = repository
-        self.waha_client = waha_client
+        self.wweb_client = wweb_client
         self.message_builder = message_builder
         self.narrator_service = narrator_service
         self.retry_enabled = retry_enabled
@@ -196,24 +199,25 @@ class WhatsappDispatchService:
         provider_response: dict[str, Any] | None = None
         caught_exception: Exception | None = None
         try:
-            raw_response = self.waha_client.send_text_message(
+            raw_response = self.wweb_client.send_text_message(
                 chat_id=recipient.destination,
                 text=text,
-                session=recipient.session_name,
             )
             if isinstance(raw_response, dict):
                 provider_response = raw_response
                 provider_message_id = raw_response.get("id") or raw_response.get("messageId")
+                if isinstance(provider_message_id, Mapping):
+                    provider_message_id = provider_message_id.get("_serialized") or provider_message_id.get("id")
                 status = str(raw_response.get("status") or status)
         except Exception as exc:
             status = "exhausted" if self.retry_enabled and attempt_number >= self.retry_max_attempts else "failed"
-            error_message = str(exc)
+            error_message = str(exc)[:ERROR_MESSAGE_MAX_LENGTH]
             caught_exception = exc
 
         delivery = self.repository.create_delivery(
             recipient_id=recipient.id,
             event_type=event_type,
-            provider_name="WAHA",
+            provider_name="WWEB",
             session_name=recipient.session_name,
             destination=recipient.destination,
             status=status,

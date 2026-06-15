@@ -63,7 +63,6 @@ def test_whatsapp_recipient_routes_require_authentication(monkeypatch) -> None:
 
 def test_whatsapp_recipient_create_list_and_update_api(monkeypatch) -> None:
     monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
-    monkeypatch.setenv("WAHA_DEFAULT_SESSION", "default")
     get_settings.cache_clear()
     _ensure_notification_tables()
 
@@ -124,7 +123,6 @@ def test_whatsapp_recipient_create_list_and_update_api(monkeypatch) -> None:
 
 def test_whatsapp_recipient_create_rejects_duplicate_number_same_session(monkeypatch) -> None:
     monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
-    monkeypatch.setenv("WAHA_DEFAULT_SESSION", "default")
     get_settings.cache_clear()
     _ensure_notification_tables()
 

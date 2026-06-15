@@ -7,10 +7,8 @@ from src.infrastructure.notification.models import (
     NotificationMessagePayload,
     NotificationNarrativeResult,
     RenderedNotificationMessage,
-    WhatsappQrCodeResult,
-    WhatsappSessionInfo,
 )
-from src.infrastructure.notification.waha_client import WahaClient, WahaClientError
+from src.infrastructure.notification.wweb_client import WwebClient, WwebClientError
 
 __all__ = [
     "GroqNarratorClient",
@@ -20,8 +18,6 @@ __all__ = [
     "NotificationMessagePayload",
     "NotificationNarrativeResult",
     "RenderedNotificationMessage",
-    "WhatsappQrCodeResult",
-    "WhatsappSessionInfo",
-    "WahaClient",
-    "WahaClientError",
+    "WwebClient",
+    "WwebClientError",
 ]

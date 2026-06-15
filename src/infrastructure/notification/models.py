@@ -52,25 +52,3 @@ class RenderedNotificationMessage:
     payload: NotificationMessagePayload
     narrative: NotificationNarrativeResult
     text: str
-
-
-@dataclass(frozen=True, slots=True)
-class WhatsappSessionInfo:
-    """Normalized WAHA session information for dashboard APIs."""
-
-    name: str
-    status: str
-    me: dict[str, Any] | None = None
-    engine: dict[str, Any] | None = None
-    config: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class WhatsappQrCodeResult:
-    """Normalized QR response for image/base64 or raw value."""
-
-    session_name: str
-    format: str
-    mimetype: str | None = None
-    data: str | None = None
-    value: str | None = None

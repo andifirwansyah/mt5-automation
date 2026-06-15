@@ -1,35 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
 
 from src.api.main import app
 from src.api.routes import notification_routes
 from src.config.settings import get_settings
-from src.infrastructure.notification import WahaClientError
 from src.infrastructure.database.session import SessionLocal
 from src.repositories.auth_repository import AuthRepository
 from src.services.password_hasher_service import hash_password
-
-
-@dataclass
-class FakeSessionInfo:
-    name: str
-    status: str
-    me: dict | None = None
-    engine: dict | None = None
-    config: dict | None = None
-
-
-@dataclass
-class FakeQrResult:
-    session_name: str
-    format: str
-    mimetype: str | None = None
-    data: str | None = None
-    value: str | None = None
 
 
 def _create_dashboard_user(email: str, password: str) -> None:
@@ -55,130 +35,6 @@ def _login_and_get_auth_headers(client: TestClient, email: str, password: str) -
     assert login_response.status_code == 200
     token = login_response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
-
-
-def test_whatsapp_sessions_list_api(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
-    get_settings.cache_clear()
-
-    login_email = f"dashboard.notification.{uuid.uuid4().hex[:10]}@example.com"
-    login_password = "Pass123."
-    _create_dashboard_user(login_email, login_password)
-
-    class FakeService:
-        def list_sessions(self, *, include_all: bool = True):
-            assert include_all is True
-            return [
-                FakeSessionInfo(
-                    name="default",
-                    status="WORKING",
-                    me={"id": "628123@c.us", "pushName": "Ops"},
-                    engine={"engine": "NOWEB"},
-                    config={"metadata": {"source": "pytest"}},
-                )
-            ]
-
-    monkeypatch.setattr(notification_routes, "_whatsapp_session_service", lambda: FakeService())
-
-    try:
-        client = TestClient(app)
-        headers = _login_and_get_auth_headers(client, login_email, login_password)
-        response = client.get("/api/v1/notifications/whatsapp/sessions", headers=headers)
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["items"][0]["name"] == "default"
-        assert payload["items"][0]["status"] == "WORKING"
-        assert payload["items"][0]["me"]["pushName"] == "Ops"
-    finally:
-        get_settings.cache_clear()
-
-
-def test_whatsapp_session_create_and_qr_api(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
-    get_settings.cache_clear()
-
-    login_email = f"dashboard.notification.{uuid.uuid4().hex[:10]}@example.com"
-    login_password = "Pass123."
-    _create_dashboard_user(login_email, login_password)
-
-    class FakeService:
-        def create_session(self, *, session_name: str, start: bool = True, metadata=None):
-            assert session_name == "ops-main"
-            assert start is True
-            assert metadata == {"owner": "ops"}
-            return FakeSessionInfo(name="ops-main", status="STARTING", config={"metadata": metadata})
-
-        def get_qr_code(self, session_name: str, *, qr_format: str = "image"):
-            assert session_name == "ops-main"
-            assert qr_format == "image"
-            return FakeQrResult(
-                session_name="ops-main",
-                format="image",
-                mimetype="image/png",
-                data="base64-encoded-qr",
-            )
-
-    monkeypatch.setattr(notification_routes, "_whatsapp_session_service", lambda: FakeService())
-
-    try:
-        client = TestClient(app)
-        headers = _login_and_get_auth_headers(client, login_email, login_password)
-
-        create_response = client.post(
-            "/api/v1/notifications/whatsapp/sessions",
-            json={"session_name": "ops-main", "start": True, "metadata": {"owner": "ops"}},
-            headers=headers,
-        )
-        assert create_response.status_code == 200
-        assert create_response.json()["name"] == "ops-main"
-        assert create_response.json()["status"] == "STARTING"
-
-        qr_response = client.get(
-            "/api/v1/notifications/whatsapp/sessions/ops-main/qr?qr_format=image",
-            headers=headers,
-        )
-        assert qr_response.status_code == 200
-        qr_payload = qr_response.json()
-        assert qr_payload["session_name"] == "ops-main"
-        assert qr_payload["mimetype"] == "image/png"
-        assert qr_payload["data"] == "base64-encoded-qr"
-    finally:
-        get_settings.cache_clear()
-
-
-def test_whatsapp_session_routes_require_authentication(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
-    get_settings.cache_clear()
-
-    try:
-        client = TestClient(app)
-        response = client.get("/api/v1/notifications/whatsapp/sessions")
-        assert response.status_code == 401
-    finally:
-        get_settings.cache_clear()
-
-
-def test_whatsapp_session_qr_maps_not_found_from_waha(monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "test-secret-key")
-    get_settings.cache_clear()
-
-    login_email = f"dashboard.notification.{uuid.uuid4().hex[:10]}@example.com"
-    login_password = "Pass123."
-    _create_dashboard_user(login_email, login_password)
-
-    class FakeService:
-        def get_qr_code(self, session_name: str, *, qr_format: str = "image"):
-            raise WahaClientError("WAHA HTTP error 404: not found", status_code=404, response_body="not found")
-
-    monkeypatch.setattr(notification_routes, "_whatsapp_session_service", lambda: FakeService())
-
-    try:
-        client = TestClient(app)
-        headers = _login_and_get_auth_headers(client, login_email, login_password)
-        response = client.get("/api/v1/notifications/whatsapp/sessions/missing/qr", headers=headers)
-        assert response.status_code == 404
-    finally:
-        get_settings.cache_clear()
 
 
 def test_whatsapp_recipient_test_message_and_dispatch_api(monkeypatch) -> None:
@@ -310,7 +166,7 @@ def test_whatsapp_delivery_history_api(monkeypatch) -> None:
                         "retry_of_delivery_id": None,
                         "attempt_number": 1,
                         "event_type": "SIGNAL_READY",
-                        "provider_name": "WAHA",
+                        "provider_name": "WWEB",
                         "session_name": "default",
                         "destination": "628123@c.us",
                         "status": "queued",
@@ -338,7 +194,7 @@ def test_whatsapp_delivery_history_api(monkeypatch) -> None:
         payload = response.json()
         assert payload["total"] == 1
         assert payload["items"][0]["event_type"] == "SIGNAL_READY"
-        assert payload["items"][0]["provider_name"] == "WAHA"
+        assert payload["items"][0]["provider_name"] == "WWEB"
     finally:
         get_settings.cache_clear()
 
@@ -417,7 +273,7 @@ def test_whatsapp_delivery_detail_and_retry_candidates_api(monkeypatch) -> None:
                     "retry_of_delivery_id": None,
                     "attempt_number": 1,
                     "event_type": "SIGNAL_READY",
-                    "provider_name": "WAHA",
+                    "provider_name": "WWEB",
                     "session_name": "default",
                     "destination": "628123@c.us",
                     "status": "failed",
@@ -425,7 +281,7 @@ def test_whatsapp_delivery_detail_and_retry_candidates_api(monkeypatch) -> None:
                     "narrative_provider": "groq",
                     "used_fallback": False,
                     "message_text": "rendered message",
-                    "error_message": "waha down",
+                    "error_message": "wweb down",
                     "details": {"status": "failed"},
                     "created_at": created_at,
                 },

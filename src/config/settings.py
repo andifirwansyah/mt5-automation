@@ -108,10 +108,9 @@ class AppSettings(BaseSettings):
     log_compression: str = Field(default="zip", alias="LOG_COMPRESSION")
 
     timezone: str = Field(default="UTC", alias="TIMEZONE")
-    waha_base_url: str = Field(default="", alias="WAHA_BASE_URL")
-    waha_api_key: str = Field(default="", alias="WAHA_API_KEY")
-    waha_default_session: str = Field(default="default", alias="WAHA_DEFAULT_SESSION")
-    waha_request_timeout_seconds: float = Field(default=10.0, alias="WAHA_REQUEST_TIMEOUT_SECONDS")
+    wweb_base_url: str = Field(default="https://wweb.lalapan.online", alias="WWEB_BASE_URL")
+    wweb_api_key: str = Field(default="", alias="WWEB_API_KEY")
+    wweb_request_timeout_seconds: float = Field(default=10.0, alias="WWEB_REQUEST_TIMEOUT_SECONDS")
     groq_base_url: str = Field(default="https://api.groq.com/openai/v1", alias="GROQ_BASE_URL")
     groq_secret_key: str = Field(default="", alias="GROQ_SECRET_KEY")
     groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")

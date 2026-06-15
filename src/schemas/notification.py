@@ -3,37 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from src.infrastructure.notification.models import NotificationEventType
-
-
-class WhatsappSessionCreatePayload(BaseModel):
-    session_name: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._-]+$")
-    start: bool = True
-    metadata: dict[str, str] | None = None
-
-
-class WhatsappSessionResponse(BaseModel):
-    name: str
-    status: str
-    me: dict[str, Any] | None = None
-    engine: dict[str, Any] | None = None
-    config: dict[str, Any] | None = None
-
-
-class WhatsappSessionListResponse(BaseModel):
-    items: list[WhatsappSessionResponse]
-
-
-class WhatsappQrCodeResponse(BaseModel):
-    session_name: str
-    format: Literal["image", "raw"]
-    mimetype: str | None = None
-    data: str | None = None
-    value: str | None = None
 
 
 class WhatsappRecipientCreatePayload(BaseModel):

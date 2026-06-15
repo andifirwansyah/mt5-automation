@@ -19,7 +19,6 @@ from src.services.runtime_recovery_service import RuntimeRecoveryService
 from src.services.trade_lifecycle_service import TradeLifecycleService
 from src.services.trade_management_service import TradeManagementService
 from src.services.whatsapp_recipient_service import WhatsappRecipientService
-from src.services.whatsapp_session_service import WhatsappSessionService
 
 __all__ = [
     "BotRuntimeService",
@@ -41,5 +40,4 @@ __all__ = [
     "RuntimeConfigService",
     "RuntimeRecoveryService",
     "WhatsappRecipientService",
-    "WhatsappSessionService",
 ]
